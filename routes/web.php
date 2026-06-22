@@ -1,12 +1,27 @@
-<?php
-
 use Illuminate\Support\Facades\Route;
 
-Route::inertia('/', 'welcome')->name('home');
+Route::get('/', function () {
+    return inertia('welcome');
+})->name('home');
+
+/*
+|----------------------------------------
+| AUTH ROUTES (LOGIN PAGE)
+|----------------------------------------
+*/
+
+// Show login page (THIS IS WHAT YOU WERE MISSING)
+Route::get('/login', function () {
+    return inertia('auth/Login');
+})->name('login');
+
+/*
+|----------------------------------------
+| AUTHENTICATED AREA
+|----------------------------------------
+*/
 
 Route::middleware(['auth', 'verified'])->group(function () {
-    Route::inertia('dashboard', 'dashboard')->name('dashboard');
-    Route::inertia('visa-ai', 'VisaAi')->name('visa-ai');
+    Route::inertia('/dashboard', 'dashboard')->name('dashboard');
+    Route::inertia('/visa-ai', 'VisaAi')->name('visa-ai');
 });
-
-require __DIR__.'/settings.php';
