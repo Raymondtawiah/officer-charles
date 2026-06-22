@@ -35,4 +35,16 @@ return [
         ],
     ],
 
+    'foundry' => [
+        'endpoint' => env('FOUNDRY_ENDPOINT'),
+        'api_key' => env('FOUNDRY_API_KEY'),
+        'agent_id' => env('FOUNDRY_AGENT_ID'),
+        'api_version' => env('FOUNDRY_API_VERSION', '1'),
+    ],
+
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'model' => env('GEMINI_MODEL', 'gemini-2.0-flash'),
+    ],
+
 ];
