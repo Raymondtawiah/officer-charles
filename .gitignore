@@ -12,5 +12,8 @@
 /.phpunit.cache
 /logs
 /logs/*
+core_v3/logs/
+/.venv
+.venv/
 /.venv
 .venv/
