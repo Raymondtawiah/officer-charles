@@ -44,7 +44,13 @@ return [
 
     'gemini' => [
         'api_key' => env('GEMINI_API_KEY'),
-        'model' => env('GEMINI_MODEL', 'gemini-2.0-flash'),
+        'model' => env('GEMINI_MODEL', 'gemini-2.5-flash'),
+        'fallback_model' => env('GEMINI_FALLBACK_MODEL', 'gemini-2.0-flash-lite'),
+    ],
+
+    'core_v2' => [
+        'base_url' => env('CORE_V2_BASE_URL', 'http://127.0.0.1:8010'),
+        'ws_public_url' => env('CORE_V2_WS_PUBLIC_URL', 'ws://127.0.0.1:8010'),
     ],
 
 ];
