@@ -1,0 +1,59 @@
+[
+  {
+    "type": "function",
+    "name": "process_admin",
+    "description": "Submit structured information from the applicant so the Python live interview assistant can choose the next controlled interview step.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "service_type": {
+          "type": "string",
+          "description": "Current interview service stage.",
+          "enum": [
+            "unknown",
+            "start",
+            "mode_selection",
+            "visa_selection",
+            "training",
+            "interview"
+          ]
+        },
+        "selected_mode": {
+          "type": "string",
+          "description": "Practice mode selected by the applicant.",
+          "enum": [
+            "training",
+            "interview"
+          ]
+        },
+        "selected_visa_type": {
+          "type": "string",
+          "description": "Visa type selected by the applicant.",
+          "enum": [
+            "f1",
+            "b1_b2"
+          ]
+        },
+        "user_answer": {
+          "type": "string",
+          "description": "The applicant's actual answer or selection in simple text."
+        },
+        "answer_is_unclear": {
+          "type": "boolean",
+          "description": "Set true when the applicant's interview answer is unclear enough to need a follow-up question."
+        },
+        "wants_next_question": {
+          "type": "boolean",
+          "description": "Set true only if the applicant explicitly asks to move to the next training question."
+        },
+        "cancel_current_request": {
+          "type": "boolean",
+          "description": "Set true only if the applicant clearly asks to cancel or restart the current live interview flow."
+        }
+      },
+      "required": [
+        "service_type"
+      ]
+    }
+  }
+]

@@ -1,0 +1,11 @@
+[2026-06-25 02:25:43] [Payload] Plugin initialized with empty payload.
+[2026-06-25 02:25:43] [Service] Initialized
+[2026-06-25 02:25:43] [LiveInterviewAssistant] OpenAI Starting.
+[2026-06-25 02:25:43] [LiveInterviewAssistant] OpenAI Ready.
+[2026-06-25 02:25:43] [LiveInterviewAssistant] WSC: Connection Closed! Error =socket is already closed.. Re-Connecting ...
+[2026-06-25 02:25:43] [LiveInterviewAssistant] OpenAI Starting.
+[2026-06-25 02:25:43] [LiveInterviewAssistant] OpenAI Ready.
+[2026-06-25 02:35:43] [LiveInterviewAssistant] WSC: Connection Closed! Error =Connection is already closed.. Re-Connecting ...
+[2026-06-25 02:35:43] [LiveInterviewAssistant] OpenAI Starting.
+[2026-06-25 02:35:43] [LiveInterviewAssistant] OpenAI Ready.
+[2026-06-25 02:35:48] [LiveInterviewAssistant] Sent keep-alive ping (audio buffer clear)

@@ -53,4 +53,9 @@ return [
         'ws_public_url' => env('CORE_V2_WS_PUBLIC_URL', 'ws://127.0.0.1:8010'),
     ],
 
+    'core_v3' => [
+        'base_url' => env('CORE_V3_BASE_URL', 'http://127.0.0.1:8020'),
+        'ws_public_url' => env('CORE_V3_WS_PUBLIC_URL', 'ws://127.0.0.1:8020'),
+    ],
+
 ];

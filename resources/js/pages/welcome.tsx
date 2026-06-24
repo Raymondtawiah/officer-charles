@@ -3,8 +3,6 @@ import {
     AlertCircle,
     ArrowUp,
     BadgeCheck,
-    CheckCircle2,
-    ClipboardCheck,
     GraduationCap,
     HelpCircle,
     Keyboard,
@@ -16,8 +14,6 @@ import {
     Radio,
     RefreshCw,
     RotateCcw,
-    ShieldCheck,
-    Sparkles,
     Sun,
     User,
 } from 'lucide-react';
@@ -55,49 +51,54 @@ interface StoreMessageResponse {
     assistant: ServerMessage;
     session_completed?: boolean;
     session_reset?: boolean;
+    session_state?: InterviewSessionState | null;
+}
+
+interface MessagesResponse {
+    messages: ServerMessage[];
+    session_state?: InterviewSessionState | null;
+}
+
+interface InterviewSessionState {
+    experience: ExperienceMode;
+    phase: 'mode_selection' | 'visa_selection' | 'training' | 'interview' | 'evaluation' | 'completed';
+    selected_mode: InterviewMode | null;
+    selected_visa_type: VisaType | null;
+    interview_status: string;
+    current_question: string | null;
+    current_question_index: number;
+    total_questions: number;
+    answered_questions: string[];
+    last_answer_quality: string | null;
+    evaluation_ready: boolean;
+    completed: boolean;
 }
 
 const emptyLiveMessages: ChatMessage[] = [];
+const DEFAULT_MODE: InterviewMode = 'training';
+const DEFAULT_VISA_TYPE: VisaType = 'f1';
+const defaultChatSessionState: InterviewSessionState = {
+    experience: 'chat',
+    phase: 'mode_selection',
+    selected_mode: null,
+    selected_visa_type: null,
+    interview_status: 'setup',
+    current_question: null,
+    current_question_index: 0,
+    total_questions: 0,
+    answered_questions: [],
+    last_answer_quality: null,
+    evaluation_ready: false,
+    completed: false,
+};
+const defaultLiveSessionState: InterviewSessionState = {
+    ...defaultChatSessionState,
+    experience: 'live',
+};
 
 export interface Props {
     messages: ServerMessage[];
 }
-
-const modeContent = {
-    training: {
-        label: 'Training Session',
-        shortLabel: 'Training',
-        eyebrow: 'Coach mode',
-        status: 'Guided practice active',
-        placeholder: 'Write a structured visa interview answer...',
-        helper: 'Mention your program, university, funding, career plan, and home ties.',
-        panelTitle: 'Training Guidance',
-        panelCopy: 'Officer Charles scores your answer, explains what is missing, and asks the next realistic F-1/M-1 question.',
-    },
-    interview: {
-        label: 'Real Simulation',
-        shortLabel: 'Simulation',
-        eyebrow: 'Consular mode',
-        status: 'Strict interview active',
-        placeholder: 'Answer the officer directly...',
-        helper: 'No hints during simulation. Keep your answer direct, specific, and credible.',
-        panelTitle: 'Simulation Rules',
-        panelCopy: 'Officer Charles asks one question at a time and reserves feedback for the final performance report.',
-    },
-} satisfies Record<InterviewMode, Record<string, string>>;
-
-const visaContent = {
-    f1: {
-        label: 'F-1 Student Visa',
-        shortLabel: 'F-1',
-        helper: 'Student visa practice covers academics, university choice, funding, career goals, and home ties.',
-    },
-    b1_b2: {
-        label: 'B1/B2 Visitor Visa',
-        shortLabel: 'B1/B2',
-        helper: 'Visitor visa practice covers purpose of visit, destination, length of stay, payment, work, family ties, and return plans.',
-    },
-} satisfies Record<VisaType, Record<string, string>>;
 
 const experienceContent = {
     chat: {
@@ -113,30 +114,9 @@ const experienceContent = {
 } satisfies Record<ExperienceMode, Record<string, string>>;
 
 const starterPrompts = [
-    'Begin my F-1 visa practice interview for computer science.',
-    'Coach my next answer and tell me what to improve.',
-    'Start a strict real visa interview simulation.',
-];
-
-const sessionTarget = 12;
-
-const checklistItems = [
-    {
-        label: 'Specific university and program',
-        keywords: ['university', 'college', 'program', 'major', 'degree', 'course', 'asu', 'arizona state'],
-    },
-    {
-        label: 'Funding source and affordability',
-        keywords: ['fund', 'funding', 'sponsor', 'scholarship', 'tuition', 'bank', 'salary', 'parents', 'loan', 'afford'],
-    },
-    {
-        label: 'Career plan after graduation',
-        keywords: ['career', 'job', 'work', 'after graduation', 'graduate', 'return', 'company', 'business', 'future'],
-    },
-    {
-        label: 'Clear home-country ties',
-        keywords: ['home country', 'family', 'property', 'return home', 'come back', 'pakistan', 'parents', 'ties'],
-    },
+    'Start my visa interview practice.',
+    'Begin a guided interview.',
+    'Help me practice with Officer Charles.',
 ];
 
 function formatTime(value: string) {
@@ -147,18 +127,6 @@ function isFinalReport(content: string) {
     return content.includes('FINAL REPORT') || content.includes('Performance Report');
 }
 
-function latestKnownMode(messages: ServerMessage[]): InterviewMode {
-    const latestMode = [...messages].reverse().find((message) => message.mode === 'training' || message.mode === 'interview')?.mode;
-
-    return latestMode ?? 'training';
-}
-
-function latestKnownVisaType(messages: ServerMessage[]): VisaType {
-    const latestVisaType = [...messages].reverse().find((message) => message.visa_type === 'f1' || message.visa_type === 'b1_b2')?.visa_type;
-
-    return latestVisaType ?? 'f1';
-}
-
 function textPreview(content?: string) {
     if (!content) {
         return 'No officer response yet.';
@@ -167,57 +135,41 @@ function textPreview(content?: string) {
     return content.replace(/\s+/g, ' ').trim().slice(0, 140);
 }
 
-function answeredChecklist(userMessages: ChatMessage[]) {
-    const answerText = userMessages
-        .map((message) => message.content)
-        .join(' ')
-        .toLowerCase();
+function formatPhase(value?: InterviewSessionState['phase']) {
+    const labels: Record<InterviewSessionState['phase'], string> = {
+        mode_selection: 'Choosing practice mode',
+        visa_selection: 'Choosing visa type',
+        training: 'Training session',
+        interview: 'Interview questions',
+        evaluation: 'Evaluation',
+        completed: 'Completed',
+    };
 
-    return checklistItems.map((item) => ({
-        ...item,
-        complete: item.keywords.some((keyword) => answerText.includes(keyword)),
-    }));
+    return value ? labels[value] : 'Waiting to begin';
 }
 
-function scoreFromAssistantMessage(content: string) {
-    const match = content.match(/score:\s*(\d{1,3})\s*\/\s*100/i);
-
-    return match ? Math.min(Number(match[1]), 100) : null;
-}
-
-function normalizedOfficerQuestion(content: string) {
-    const nextQuestion = content.match(/next:\s*([\s\S]+)$/i)?.[1] ?? content;
-
-    return nextQuestion
-        .replace(/\*\*/g, '')
-        .replace(/[^a-z0-9? ]/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-}
-
-function validProgressCount(messages: ChatMessage[], mode: InterviewMode) {
-    const assistantMessages = messages.filter((message) => message.role === 'assistant' && message.status !== 'pending');
-
-    if (mode === 'training') {
-        return assistantMessages.filter((message) => {
-            const score = scoreFromAssistantMessage(message.content);
-
-            return score !== null && score >= 60;
-        }).length;
+function formatSelectedMode(value?: InterviewMode | null) {
+    if (value === 'training') {
+        return 'Training Session';
     }
 
-    const uniqueQuestions = assistantMessages.reduce<string[]>((questions, message) => {
-        const question = normalizedOfficerQuestion(message.content);
+    if (value === 'interview') {
+        return 'Real Interview Simulation';
+    }
 
-        if (question && questions.at(-1) !== question) {
-            questions.push(question);
-        }
+    return 'Not selected yet';
+}
 
-        return questions;
-    }, []);
+function formatVisaType(value?: VisaType | null) {
+    if (value === 'f1') {
+        return 'F-1 Student Visa';
+    }
 
-    return Math.max(uniqueQuestions.length - 1, 0);
+    if (value === 'b1_b2') {
+        return 'B1/B2 Visitor Visa';
+    }
+
+    return 'Not selected yet';
 }
 
 function getInitialTheme(): ThemeMode {
@@ -292,8 +244,6 @@ function floatToPcm16Base64(input: Float32Array, inputSampleRate: number, output
 
 export function ChatExperience({ messages }: Props) {
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>(messages);
-    const [mode, setMode] = useState<InterviewMode>(() => latestKnownMode(messages));
-    const [visaType, setVisaType] = useState<VisaType>(() => latestKnownVisaType(messages));
     const [experienceMode, setExperienceMode] = useState<ExperienceMode>('chat');
     const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
     const [draft, setDraft] = useState('');
@@ -309,6 +259,8 @@ export function ChatExperience({ messages }: Props) {
     const [liveRecording, setLiveRecording] = useState(false);
     const [liveSpeaking, setLiveSpeaking] = useState(false);
     const [liveError, setLiveError] = useState<string | null>(null);
+    const [chatSessionState, setChatSessionState] = useState<InterviewSessionState | null>(null);
+    const [liveSessionState, setLiveSessionState] = useState<InterviewSessionState | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -323,24 +275,19 @@ export function ChatExperience({ messages }: Props) {
     const nextAudioStartRef = useRef(0);
     const liveAudioPlayingRef = useRef(0);
 
+    const mode = DEFAULT_MODE;
+    const visaType = DEFAULT_VISA_TYPE;
     const activeSessionMessages = useMemo(
         () => chatMessages.filter((message) => message.mode === mode && (message.visa_type ?? 'f1') === visaType),
         [chatMessages, mode, visaType],
     );
-    const activeUserMessages = useMemo(() => activeSessionMessages.filter((message) => message.role === 'user'), [activeSessionMessages]);
-    const activeAssistantMessages = useMemo(
-        () => activeSessionMessages.filter((message) => message.role === 'assistant' && message.status !== 'pending'),
-        [activeSessionMessages],
-    );
-    const completedSteps = useMemo(() => validProgressCount(activeSessionMessages, mode), [activeSessionMessages, mode]);
-    const progress = Math.min(Math.round((completedSteps / sessionTarget) * 100), 100);
-    const latestAssistantMessage = activeAssistantMessages.at(-1);
-    const readinessItems = useMemo(() => answeredChecklist(activeUserMessages), [activeUserMessages]);
-    const activeMode = modeContent[mode];
-    const activeVisa = visaContent[visaType];
     const activeExperience = experienceContent[experienceMode];
     const liveSessionKey = `${mode}:${visaType}` as LiveSessionKey;
     const activeLiveMessages = liveMessagesBySession[liveSessionKey] ?? emptyLiveMessages;
+    const activeSessionState = experienceMode === 'live' ? liveSessionState : chatSessionState;
+    const activeSidebarMessages = experienceMode === 'live' ? activeLiveMessages : activeSessionMessages;
+    const activeSidebarUserCount = activeSidebarMessages.filter((message) => message.role === 'user').length;
+    const activeSidebarAssistant = activeSidebarMessages.filter((message) => message.role === 'assistant' && message.status !== 'pending').at(-1);
 
     const loadMessages = useCallback(async (silent = false) => {
         if (silent) {
@@ -362,11 +309,11 @@ export function ChatExperience({ messages }: Props) {
                 throw new Error('Could not load chat messages from the backend API.');
             }
 
-            const data = (await response.json()) as ServerMessage[];
+            const payload = (await response.json()) as ServerMessage[] | MessagesResponse;
+            const nextMessages = Array.isArray(payload) ? payload : payload.messages;
 
-            setChatMessages(data);
-            setMode(latestKnownMode(data));
-            setVisaType(latestKnownVisaType(data));
+            setChatMessages(nextMessages);
+            setChatSessionState(Array.isArray(payload) ? null : (payload.session_state ?? null));
             setCompletedSessionMode(null);
             setError(null);
         } catch (requestError) {
@@ -473,6 +420,7 @@ return;
                 data.user,
                 data.assistant,
             ]);
+            setChatSessionState(data.session_state ?? null);
             setCompletedSessionMode(data.session_completed ? mode : null);
         } catch (requestError) {
             setDraft(content);
@@ -524,6 +472,7 @@ return;
             }
 
             setChatMessages((currentMessages) => currentMessages.filter((message) => message.mode !== mode || (message.visa_type ?? 'f1') !== visaType));
+            setChatSessionState(defaultChatSessionState);
             setCompletedSessionMode(null);
             setDraft('');
         } catch (requestError) {
@@ -541,6 +490,7 @@ return;
 
         stopLiveInterview();
         setLiveError(null);
+        setLiveSessionState(defaultLiveSessionState);
         setLiveMessagesBySession((currentSessions) => ({
             ...currentSessions,
             [liveSessionKey]: [],
@@ -687,6 +637,12 @@ return;
                 return;
             }
 
+            if (payload.type === 'session.state') {
+                setLiveSessionState(payload.state ?? null);
+
+                return;
+            }
+
             if (payload.type === 'transcription') {
                 addLiveUserMessage(payload.message ?? '');
 
@@ -784,6 +740,7 @@ return;
             }
 
             const socket = new WebSocket(payload.ws_url);
+            setLiveSessionState(payload.session_state ?? defaultLiveSessionState);
             wsRef.current = socket;
             socket.onmessage = handleLiveMessage;
             socket.onerror = () => setLiveError('Live interview websocket error.');
@@ -819,8 +776,8 @@ return;
         liveRecordingRef.current = true;
     };
 
-    const selectMode = (nextMode: InterviewMode) => {
-        if (nextMode === mode) {
+    const selectExperienceMode = (nextExperienceMode: ExperienceMode) => {
+        if (nextExperienceMode === experienceMode) {
             return;
         }
 
@@ -829,20 +786,7 @@ return;
             setLiveError(null);
         }
 
-        setMode(nextMode);
-    };
-
-    const selectVisaType = (nextVisaType: VisaType) => {
-        if (nextVisaType === visaType) {
-            return;
-        }
-
-        if (experienceMode === 'live') {
-            stopLiveInterview();
-            setLiveError(null);
-        }
-
-        setVisaType(nextVisaType);
+        setExperienceMode(nextExperienceMode);
     };
 
     useEffect(() => () => stopLiveInterview(), [stopLiveInterview]);
@@ -863,14 +807,14 @@ return;
                                         AI simulator
                                     </Badge>
                                 </div>
-                                <p className="oc-subtle truncate text-xs sm:text-sm">Premium F-1/M-1 visa interview training workspace</p>
+                                <p className="oc-subtle truncate text-xs sm:text-sm">Visa interview practice workspace</p>
                             </div>
                         </div>
 
                         <div className="oc-header-actions flex flex-wrap items-center gap-2">
                             <div className="oc-status-pill">
                                 <span className={cn('h-2 w-2 rounded-full', syncingMessages ? 'animate-pulse bg-amber-400' : 'bg-emerald-400')} />
-                                {syncingMessages ? 'Syncing API' : `${activeExperience.status} · ${activeVisa.shortLabel}`}
+                                {syncingMessages ? 'Syncing API' : activeExperience.status}
                             </div>
 
                             <Button
@@ -892,7 +836,7 @@ return;
                                 onClick={() => void restartActiveInterview()}
                                 disabled={loadingMessages || syncingMessages || submitting || restartingSession || liveConnecting}
                                 className="oc-icon-button"
-                                aria-label={`Restart ${activeExperience.shortLabel.toLowerCase()} ${activeMode.shortLabel.toLowerCase()} interview`}
+                                aria-label={`Restart ${activeExperience.shortLabel.toLowerCase()} interview`}
                             >
                                 <RotateCcw className={cn('h-4 w-4', (restartingSession || liveConnecting) && 'animate-spin')} />
                             </Button>
@@ -913,41 +857,12 @@ return;
                                     <button
                                         key={option}
                                         type="button"
-                                        onClick={() => setExperienceMode(option)}
+                                        onClick={() => selectExperienceMode(option)}
                                         className={cn('oc-mode-button', experienceMode === option && 'is-active is-training')}
                                     >
                                         {option === 'chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
                                         <span className="hidden sm:inline">{experienceContent[option].label}</span>
                                         <span className="sm:hidden">{experienceContent[option].shortLabel}</span>
-                                    </button>
-                                ))}
-                            </div>
-
-                            <div className="oc-mode-control">
-                                {(['training', 'interview'] as InterviewMode[]).map((option) => (
-                                    <button
-                                        key={option}
-                                        type="button"
-                                        onClick={() => selectMode(option)}
-                                        className={cn('oc-mode-button', mode === option && `is-active is-${option}`)}
-                                    >
-                                        {option === 'training' ? <Sparkles className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-                                        <span className="hidden sm:inline">{modeContent[option].label}</span>
-                                        <span className="sm:hidden">{modeContent[option].shortLabel}</span>
-                                    </button>
-                                ))}
-                            </div>
-
-                            <div className="oc-mode-control">
-                                {(['f1', 'b1_b2'] as VisaType[]).map((option) => (
-                                    <button
-                                        key={option}
-                                        type="button"
-                                        onClick={() => selectVisaType(option)}
-                                        className={cn('oc-mode-button', visaType === option && 'is-active is-training')}
-                                    >
-                                        <GraduationCap className="h-4 w-4" />
-                                        <span>{visaContent[option].shortLabel}</span>
                                     </button>
                                 ))}
                             </div>
@@ -961,11 +876,9 @@ return;
                             <div className="mx-auto flex max-w-3xl flex-col gap-5">
                                 <div className="oc-mobile-sidebar lg:hidden">
                                     <MobileSummary
-                                        activeMode={activeMode}
-                                        completedSteps={completedSteps}
-                                        progress={progress}
-                                        mode={mode}
-                                        userCount={activeUserMessages.length}
+                                        experience={activeExperience}
+                                        sessionState={activeSessionState}
+                                        userCount={activeSidebarUserCount}
                                     />
                                 </div>
 
@@ -974,7 +887,7 @@ return;
                                         {loadingMessages ? (
                                             <LoadingState />
                                         ) : activeSessionMessages.length === 0 ? (
-                                            <EmptyState mode={mode} visaType={visaType} onSelectPrompt={setDraft} />
+                                            <EmptyState onSelectPrompt={setDraft} />
                                         ) : (
                                             activeSessionMessages.map((message) => <MessageBubble key={message.localId ?? message.id} message={message} />)
                                         )}
@@ -988,10 +901,8 @@ return;
                                             connected={liveConnected}
                                             connecting={liveConnecting}
                                             error={liveError}
-                                            mode={mode}
                                             recording={liveRecording}
                                             speaking={liveSpeaking}
-                                            visaType={visaType}
                                         />
                                         {activeLiveMessages.map((message) => <MessageBubble key={message.localId ?? message.id} message={message} />)}
                                         <div ref={liveMessagesEndRef} />
@@ -1004,12 +915,12 @@ return;
                             <footer className="oc-composer-wrap px-4 py-4 sm:px-6">
                                 <div className="mx-auto max-w-3xl">
                                     <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                        <div className={cn('oc-helper-pill', mode === 'interview' && 'is-danger')}>
-                                            {mode === 'training' ? <HelpCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
-                                            <span>{activeVisa.helper}</span>
+                                        <div className="oc-helper-pill">
+                                            <HelpCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                                            <span>Officer Charles will handle setup inside the conversation.</span>
                                         </div>
                                         <Badge className="oc-mode-badge" variant="outline">
-                                            {activeMode.eyebrow}
+                                            Assistant-led setup
                                         </Badge>
                                     </div>
 
@@ -1026,7 +937,7 @@ return;
                                             value={draft}
                                             onChange={(event) => setDraft(event.target.value)}
                                             onKeyDown={handleKeyDown}
-                                            placeholder={activeMode.placeholder}
+                                            placeholder="Reply to Officer Charles..."
                                             rows={1}
                                             disabled={submitting}
                                             className="oc-textarea"
@@ -1035,7 +946,7 @@ return;
                                             type="submit"
                                             size="icon"
                                             disabled={submitting || !draft.trim()}
-                                            className={cn('oc-send-button', mode === 'interview' && 'is-danger')}
+                                            className="oc-send-button"
                                         >
                                             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
                                         </Button>
@@ -1059,15 +970,12 @@ return;
                     <aside className="oc-sidebar-shell hidden min-w-0 lg:block">
                         <div className="oc-sidebar-stack">
                             <SidebarCards
-                                activeMode={activeMode}
-                                completedSteps={completedSteps}
-                                latestAssistant={latestAssistantMessage}
+                                latestAssistant={activeSidebarAssistant}
                                 onRestart={() => void restartActiveInterview()}
-                                progress={progress}
                                 restartingSession={restartingSession || liveConnecting}
-                                readinessItems={readinessItems}
-                                mode={mode}
-                                userCount={activeUserMessages.length}
+                                experience={activeExperience}
+                                sessionState={activeSessionState}
+                                userCount={activeSidebarUserCount}
                             />
                         </div>
                     </aside>
@@ -1087,27 +995,39 @@ export default function VisaAi({ messages }: Props) {
 }
 
 function SidebarCards({
-    activeMode,
-    completedSteps,
     latestAssistant,
     onRestart,
-    progress,
     restartingSession,
-    readinessItems,
-    mode,
+    experience,
+    sessionState,
     userCount,
 }: {
-    activeMode: (typeof modeContent)[InterviewMode];
-    completedSteps: number;
+    experience: (typeof experienceContent)[ExperienceMode];
     latestAssistant?: ChatMessage;
     onRestart: () => void;
-    progress: number;
     restartingSession: boolean;
-    readinessItems: Array<(typeof checklistItems)[number] & { complete: boolean }>;
-    mode: InterviewMode;
+    sessionState: InterviewSessionState | null;
     userCount: number;
 }) {
-    const completedReadiness = readinessItems.filter((item) => item.complete).length;
+    const answeredCount = sessionState?.answered_questions.length ?? 0;
+    const totalQuestions = sessionState?.total_questions ?? 0;
+    const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : null;
+    const checklistItems = [
+        ...(sessionState?.answered_questions ?? []).map((question) => ({
+            key: `answered-${question}`,
+            label: question,
+            status: 'Answered',
+            active: false,
+        })),
+        ...(sessionState?.current_question
+            ? [{
+                key: `current-${sessionState.current_question}`,
+                label: sessionState.current_question,
+                status: 'Current question',
+                active: true,
+            }]
+            : []),
+    ].slice(-5);
 
     return (
         <>
@@ -1115,22 +1035,26 @@ function SidebarCards({
                 <div className="flex items-start justify-between gap-3">
                     <div>
                         <p className="oc-kicker">Actual Session</p>
-                        <h2 className="oc-card-title">{activeMode.shortLabel} live practice</h2>
+                        <h2 className="oc-card-title">{experience.label}</h2>
                     </div>
-                    <div className={cn('oc-card-icon', mode === 'interview' && 'is-danger')}>
-                        {mode === 'training' ? <Sparkles className="h-5 w-5" /> : <ShieldCheck className="h-5 w-5" />}
+                    <div className="oc-card-icon">
+                        {experience.shortLabel === 'Chat' ? <Keyboard className="h-5 w-5" /> : <Radio className="h-5 w-5" />}
                     </div>
                 </div>
-                <p className="oc-card-copy">{activeMode.panelCopy}</p>
+                <p className="oc-card-copy">This card shows only confirmed state from the assistant session.</p>
                 <div className="oc-session-stats mt-4 grid grid-cols-2 gap-2">
                     <div>
-                        <span>{userCount}</span>
-                        <p>Your answers</p>
+                        <span>{formatSelectedMode(sessionState?.selected_mode)}</span>
+                        <p>Practice mode</p>
                     </div>
                     <div>
-                        <span>{completedSteps}</span>
-                        <p>Accepted answers</p>
+                        <span>{formatVisaType(sessionState?.selected_visa_type)}</span>
+                        <p>Visa type</p>
                     </div>
+                </div>
+                <div className="oc-latest-response mt-3">
+                    <p className="oc-kicker">Status</p>
+                    <p>{formatPhase(sessionState?.phase)}</p>
                 </div>
                 <div className="oc-latest-response mt-3">
                     <p className="oc-kicker">Latest Officer Response</p>
@@ -1138,9 +1062,9 @@ function SidebarCards({
                 </div>
                 <div className="mt-4 flex items-center justify-between gap-3">
                     <Badge className="oc-mode-badge" variant="outline">
-                        {activeMode.shortLabel}
+                        {experience.shortLabel}
                     </Badge>
-                    <span className="oc-subtle text-xs">{completedSteps > 0 ? 'Progress is live' : 'Waiting for a valid answer'}</span>
+                    <span className="oc-subtle text-xs">{userCount} user answers</span>
                 </div>
                 <Button
                     type="button"
@@ -1155,81 +1079,89 @@ function SidebarCards({
             </section>
 
             <section className="oc-sidebar-card oc-scroll-card">
-                <div className="mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="oc-card-icon">
-                            <MessageSquareText className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <p className="oc-kicker">Progress</p>
-                            <h3 className="oc-card-title">Interview Progress</h3>
-                        </div>
+                <div className="mb-4 flex items-center gap-3">
+                    <div className="oc-card-icon">
+                        <MessageSquareText className="h-5 w-5" />
                     </div>
-                    <span className="oc-progress-value">{progress}%</span>
+                    <div>
+                        <p className="oc-kicker">Real Progress</p>
+                        <h3 className="oc-card-title">{progress === null ? 'Not started yet' : `${progress}% complete`}</h3>
+                    </div>
                 </div>
-                <div className="oc-progress-track">
-                    <div className={cn('oc-progress-bar', mode === 'interview' && 'is-danger')} style={{ width: `${progress}%` }} />
-                </div>
-                <p className="oc-card-copy mt-3">
-                    {completedSteps} of {sessionTarget} valid interview answers accepted. Off-topic or repeated attempts stay on the same step.
-                </p>
+                {progress === null ? (
+                    <p className="oc-card-copy mt-3">Progress begins after Officer Charles starts the interview questions.</p>
+                ) : (
+                    <>
+                        <div className="mb-3 mt-4 flex items-center justify-between gap-3">
+                            <span className="oc-subtle text-xs">{answeredCount} of {totalQuestions} answered</span>
+                            <span className="oc-progress-value">{progress}%</span>
+                        </div>
+                        <div className="oc-progress-track">
+                            <div className="oc-progress-bar" style={{ width: `${progress}%` }} />
+                        </div>
+                    </>
+                )}
             </section>
 
             <section className="oc-sidebar-card oc-readiness-card oc-scroll-card">
                 <div className="mb-4 flex items-center gap-3">
-                    <div className="oc-card-icon is-gold">
-                        <ClipboardCheck className="h-5 w-5" />
+                    <div className="oc-card-icon">
+                        <BadgeCheck className="h-5 w-5" />
                     </div>
                     <div>
-                        <p className="oc-kicker">Readiness</p>
-                        <h3 className="oc-card-title">Answer Checklist</h3>
+                        <p className="oc-kicker">Answers Checklist</p>
+                        <h3 className="oc-card-title">Real answered questions</h3>
                     </div>
                 </div>
-                <p className="oc-card-copy mb-3 mt-0">{completedReadiness} of {readinessItems.length} signals detected from your answers.</p>
-                <ul className="oc-readiness-list grid gap-3">
-                    {readinessItems.map((item) => (
-                        <li key={item.label} className={cn('oc-check-item', item.complete && 'is-complete')}>
-                            <CheckCircle2 className="h-4 w-4 shrink-0" />
-                            <span>{item.label}</span>
-                        </li>
-                    ))}
-                </ul>
+                {checklistItems.length > 0 ? (
+                    <div className="oc-readiness-list flex flex-col gap-2">
+                        {checklistItems.map((item) => (
+                            <div key={item.key} className={cn('oc-check-item', item.active && 'is-active')}>
+                                <BadgeCheck className={cn('mt-0.5 h-4 w-4 shrink-0', item.active ? 'text-[var(--oc-accent)]' : 'text-emerald-400')} />
+                                <div>
+                                    <p className="font-semibold text-[var(--oc-text)]">{item.status}</p>
+                                    <p>{item.label}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <p className="oc-card-copy">No interview answers yet. This checklist appears only after the assistant has real question state.</p>
+                )}
             </section>
         </>
     );
 }
 
 function MobileSummary({
-    activeMode,
-    completedSteps,
-    progress,
-    mode,
+    experience,
+    sessionState,
     userCount,
 }: {
-    activeMode: (typeof modeContent)[InterviewMode];
-    completedSteps: number;
-    progress: number;
-    mode: InterviewMode;
+    experience: (typeof experienceContent)[ExperienceMode];
+    sessionState: InterviewSessionState | null;
     userCount: number;
 }) {
+    const answeredCount = sessionState?.answered_questions.length ?? 0;
+    const totalQuestions = sessionState?.total_questions ?? 0;
+    const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : null;
+
     return (
         <section className="oc-mobile-summary">
-            <div className={cn('oc-card-icon', mode === 'interview' && 'is-danger')}>
-                {mode === 'training' ? <Sparkles className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+            <div className="oc-card-icon">
+                {experience.shortLabel === 'Chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
             </div>
             <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                        <p className="oc-kicker">Current mode</p>
-                        <h2 className="oc-card-title truncate">{activeMode.shortLabel}</h2>
+                        <p className="oc-kicker">Current experience</p>
+                        <h2 className="oc-card-title truncate">{experience.label}</h2>
                     </div>
-                    <span className="oc-progress-value shrink-0">{progress}%</span>
-                </div>
-                <div className="oc-progress-track mt-2">
-                    <div className={cn('oc-progress-bar', mode === 'interview' && 'is-danger')} style={{ width: `${progress}%` }} />
                 </div>
                 <p className="oc-card-copy mt-2">
-                    {userCount} answers, {completedSteps} of {sessionTarget} accepted
+                    {progress === null
+                        ? `${formatPhase(sessionState?.phase)}. ${userCount} user answers.`
+                        : `${progress}% complete. ${answeredCount} of ${totalQuestions} answered.`}
                 </p>
             </div>
         </section>
@@ -1248,18 +1180,18 @@ function LoadingState() {
     );
 }
 
-function EmptyState({ mode, visaType, onSelectPrompt }: { mode: InterviewMode; visaType: VisaType; onSelectPrompt: (prompt: string) => void }) {
+function EmptyState({ onSelectPrompt }: { onSelectPrompt: (prompt: string) => void }) {
     return (
         <div className="flex min-h-[54vh] flex-col items-center justify-center text-center">
             <div className="oc-empty-mark">
                 <BadgeCheck className="h-7 w-7" />
             </div>
             <Badge className="oc-mode-badge mb-4" variant="outline">
-                {modeContent[mode].status}
+                Assistant-led setup
             </Badge>
             <h2 className="oc-empty-title">Interview ready</h2>
             <p className="oc-empty-copy">
-                Practice a calm, specific, and credible {visaContent[visaType].label} interview. Choose a starter prompt or write your own answer.
+                Start in chat, then Officer Charles will guide the setup inside the conversation.
             </p>
             <div className="mt-8 grid w-full max-w-3xl gap-3 sm:grid-cols-3">
                 {starterPrompts.map((prompt, index) => (
@@ -1277,18 +1209,14 @@ function LiveInterviewStage({
     connected,
     connecting,
     error,
-    mode,
     recording,
     speaking,
-    visaType,
 }: {
     connected: boolean;
     connecting: boolean;
     error: string | null;
-    mode: InterviewMode;
     recording: boolean;
     speaking: boolean;
-    visaType: VisaType;
 }) {
     const avatarSrc = speaking || recording ? '/assets/images/assistant.gif' : '/assets/images/assistant.png';
 
@@ -1306,7 +1234,7 @@ function LiveInterviewStage({
 
                 <div className="oc-live-copy">
                     <Badge className="oc-mode-badge mb-3" variant="outline">
-                        {visaContent[visaType].label} · {modeContent[mode].shortLabel}
+                        Assistant-led setup
                     </Badge>
                     <h2 className="oc-empty-title">{connected ? 'Live interview active' : 'Live interview ready'}</h2>
                     <p className="oc-empty-copy">

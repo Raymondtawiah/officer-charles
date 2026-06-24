@@ -727,6 +727,11 @@
         line-height: 1.35;
     }
 
+    .oc-check-item.is-active {
+        border-color: color-mix(in oklab, var(--oc-accent) 58%, var(--oc-border));
+        background: color-mix(in oklab, var(--oc-accent) 12%, var(--oc-surface-soft));
+    }
+
     .oc-readiness-card {
         display: flex;
         min-height: 0;

@@ -8,5 +8,9 @@
 /storage/framework/cache/data
 /storage/framework/sessions
 /storage/framework/testing
-/storage/framework/views/*.php
+ /storage/framework/views/*.php
 /.phpunit.cache
+/logs
+/logs/*
+/.venv
+.venv/

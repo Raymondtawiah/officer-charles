@@ -16,18 +16,36 @@ test('ai message validates mode and visa type', function () {
         ->assertJsonValidationErrors(['mode', 'visa_type']);
 });
 
-test('ai message stores selected visa type and calls gemini', function () {
+function fakeSessionState(array $overrides = []): array
+{
+    return array_merge([
+        'experience' => 'chat',
+        'phase' => 'mode_selection',
+        'selected_mode' => null,
+        'selected_visa_type' => null,
+        'interview_status' => 'mode_selection',
+        'current_question' => null,
+        'current_question_index' => 0,
+        'total_questions' => 0,
+        'answered_questions' => [],
+        'last_answer_quality' => null,
+        'evaluation_ready' => false,
+        'completed' => false,
+    ], $overrides);
+}
+
+test('ai message stores selected visa type and calls core v3 chat', function () {
     Http::fake([
-        'generativelanguage.googleapis.com/*' => Http::response([
-            'candidates' => [
-                [
-                    'content' => [
-                        'parts' => [
-                            ['text' => 'Good morning. Please provide your passport.'],
-                        ],
-                    ],
-                ],
-            ],
+        'http://127.0.0.1:8020/chat' => Http::response([
+            'content' => 'Good morning. Please provide your passport.',
+            'state' => fakeSessionState([
+                'phase' => 'interview',
+                'selected_mode' => 'interview',
+                'selected_visa_type' => 'b1_b2',
+                'current_question' => 'What is the purpose of your visit to the United States?',
+                'current_question_index' => 1,
+                'total_questions' => 8,
+            ]),
         ], 200),
     ]);
 
@@ -42,27 +60,29 @@ test('ai message stores selected visa type and calls gemini', function () {
     expect(AiMessage::where('role', 'user')->first()->visa_type)->toBe('b1_b2')
         ->and(AiMessage::where('role', 'assistant')->first()->visa_type)->toBe('b1_b2');
 
-    Http::assertSent(fn ($request) => str_contains($request->url(), 'generativelanguage.googleapis.com')
-        && $request['contents'][0]['parts'][0]['text'] === 'Start my interview.'
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'APPLICATION SELECTION OVERRIDE')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'MODE: REAL INTERVIEW SIMULATION')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'DO NOT:')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'Good morning. Please provide your passport.')
-        && ! str_contains($request['systemInstruction']['parts'][0]['text'], 'Strengths:'));
+    $response->assertJsonPath('session_state.selected_visa_type', 'b1_b2');
+
+    Http::assertSent(fn ($request) => $request->url() === 'http://127.0.0.1:8020/chat'
+        && $request['content'] === 'Start my interview.'
+        && $request['mode'] === 'interview'
+        && $request['visa_type'] === 'b1_b2'
+        && $request['session_target'] === 12
+        && isset($request['gemini']['api_key']));
 });
 
-test('training chat prompt follows pdf retry format and does not advance after strong answers', function () {
+test('training chat forwards to core v3 and stores returned retry state', function () {
     Http::fake([
-        'generativelanguage.googleapis.com/*' => Http::response([
-            'candidates' => [
-                [
-                    'content' => [
-                        'parts' => [
-                            ['text' => "Strengths:\n- Clear goal.\n\nWeaknesses:\n- Needs detail.\n\nImprovement Suggestions:\n- Add sponsor details.\n\nRetry:\nPlease answer the same question again."],
-                        ],
-                    ],
-                ],
-            ],
+        'http://127.0.0.1:8020/chat' => Http::response([
+            'content' => "Strengths:\n- Clear goal.\n\nWeaknesses:\n- Needs detail.\n\nImprovement Suggestions:\n- Add sponsor details.\n\nRetry:\nPlease answer the same question again.",
+            'state' => fakeSessionState([
+                'phase' => 'training',
+                'selected_mode' => 'training',
+                'selected_visa_type' => 'f1',
+                'current_question' => 'How will you pay for your studies?',
+                'current_question_index' => 6,
+                'total_questions' => 10,
+                'answered_questions' => ['How will you pay for your studies?'],
+            ]),
         ], 200),
     ]);
 
@@ -74,28 +94,30 @@ test('training chat prompt follows pdf retry format and does not advance after s
 
     $response->assertCreated();
 
-    Http::assertSent(fn ($request) => str_contains($request->url(), 'generativelanguage.googleapis.com')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'MODE: TRAINING SESSION')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'Strengths:')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'Weaknesses:')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'Improvement Suggestions:')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'Retry:')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'Ask the applicant to answer the same question again.')
-        && ! str_contains($request['systemInstruction']['parts'][0]['text'], 'ask the next appropriate interview question'));
+    $response
+        ->assertJsonPath('session_state.phase', 'training')
+        ->assertJsonPath('session_state.answered_questions.0', 'How will you pay for your studies?');
+
+    Http::assertSent(fn ($request) => $request->url() === 'http://127.0.0.1:8020/chat'
+        && $request['mode'] === 'training'
+        && $request['visa_type'] === 'f1'
+        && $request['content'] === 'My parents will pay.');
 });
 
 test('real simulation asks for final report only after target interview turns', function () {
     Http::fake([
-        'generativelanguage.googleapis.com/*' => Http::response([
-            'candidates' => [
-                [
-                    'content' => [
-                        'parts' => [
-                            ['text' => "Interview Performance Report\n\nOverall Performance Score: 75%\n\nWhat Went Well\n- Clear answers.\n\nAreas To Improve\n- Add detail."],
-                        ],
-                    ],
-                ],
-            ],
+        'http://127.0.0.1:8020/chat' => Http::response([
+            'content' => "Interview Performance Report\n\nOverall Performance Score: 75%\n\nWhat Went Well\n- Clear answers.\n\nAreas To Improve\n- Add detail.",
+            'state' => fakeSessionState([
+                'phase' => 'completed',
+                'selected_mode' => 'interview',
+                'selected_visa_type' => 'b1_b2',
+                'current_question_index' => 8,
+                'total_questions' => 8,
+                'answered_questions' => ['Purpose of visit'],
+                'evaluation_ready' => true,
+                'completed' => true,
+            ]),
         ], 200),
     ]);
 
@@ -127,16 +149,15 @@ test('real simulation asks for final report only after target interview turns', 
         ->assertCreated()
         ->assertJson(['session_completed' => true]);
 
-    Http::assertSent(fn ($request) => str_contains($request->url(), 'generativelanguage.googleapis.com')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'FINAL REPORT NOW')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'Interview Performance Report')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'personal coaching message')
-        && str_contains($request['systemInstruction']['parts'][0]['text'], 'B1/B2 VISITOR VISA'));
+    Http::assertSent(fn ($request) => $request->url() === 'http://127.0.0.1:8020/chat'
+        && count($request['history']) === 12
+        && $request['mode'] === 'interview'
+        && $request['visa_type'] === 'b1_b2');
 });
 
-test('gemini failure keeps the user answer saved', function () {
+test('core v3 chat failure keeps the user answer saved', function () {
     Http::fake([
-        'generativelanguage.googleapis.com/*' => Http::response(['error' => ['message' => 'Bad key']], 401),
+        'http://127.0.0.1:8020/chat' => Http::response(['detail' => 'Bad key'], 502),
     ]);
 
     $response = $this->postJson('/api/ai/messages', [
@@ -151,9 +172,9 @@ test('gemini failure keeps the user answer saved', function () {
         ->and(AiMessage::where('role', 'assistant')->count())->toBe(0);
 });
 
-test('live session calls core v2', function () {
+test('live session calls core v3', function () {
     Http::fake([
-        '127.0.0.1:8010/sessions' => Http::response(['session_id' => 'live-session-1'], 200),
+        'http://127.0.0.1:8020/sessions' => Http::response(['session_id' => 'live-session-1'], 200),
     ]);
 
     $response = $this->postJson('/api/ai/live-session', [
@@ -165,10 +186,12 @@ test('live session calls core v2', function () {
         ->assertOk()
         ->assertJson([
             'session_id' => 'live-session-1',
-            'ws_url' => 'ws://127.0.0.1:8010/ws/live-session-1',
+            'ws_url' => 'ws://127.0.0.1:8020/ws/live-session-1',
         ]);
 
-    Http::assertSent(fn ($request) => $request->url() === 'http://127.0.0.1:8010/sessions'
+    $response->assertJsonPath('session_state.experience', 'live');
+
+    Http::assertSent(fn ($request) => $request->url() === 'http://127.0.0.1:8020/sessions'
         && $request['mode'] === 'interview'
         && $request['visa_type'] === 'f1');
 });
@@ -213,16 +236,13 @@ test('restart closes only the selected mode and visa session', function () {
 
 test('chat session resets after five minutes without a user answer', function () {
     Http::fake([
-        'generativelanguage.googleapis.com/*' => Http::response([
-            'candidates' => [
-                [
-                    'content' => [
-                        'parts' => [
-                            ['text' => 'Good morning. Please provide your passport and your Form I-20.'],
-                        ],
-                    ],
-                ],
-            ],
+        'http://127.0.0.1:8020/chat' => Http::response([
+            'content' => 'Good morning. Please provide your passport and your Form I-20.',
+            'state' => fakeSessionState([
+                'phase' => 'interview',
+                'selected_mode' => 'interview',
+                'selected_visa_type' => 'f1',
+            ]),
         ], 200),
     ]);
 

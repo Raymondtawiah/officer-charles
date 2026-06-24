@@ -3,10 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\AiMessage;
-use Illuminate\Http\Client\RequestException;
+use App\Models\AiSessionState;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -63,9 +62,9 @@ class AiMessageController extends Controller
         ]);
 
         try {
-            $response = $this->callGemini($request->input('content'), $history, $mode, $visaType);
+            $coreResponse = $this->callCoreV3Chat($request->input('content'), $history, $mode, $visaType);
         } catch (\RuntimeException $exception) {
-            Log::error('Gemini response error', ['message' => $exception->getMessage()]);
+            Log::error('Core V3 chat response error', ['message' => $exception->getMessage()]);
 
             return $this->withSessionCookies(response()->json([
                 'message' => $exception->getMessage(),
@@ -77,19 +76,26 @@ class AiMessageController extends Controller
             'visitor_id' => $visitorId,
             'session_id' => $sessionId,
             'role' => 'assistant',
-            'content' => $response,
+            'content' => $coreResponse['content'],
             'mode' => $mode,
             'visa_type' => $visaType,
         ]);
 
+        $sessionState = $coreResponse['state'] ?? $this->defaultSessionState('chat');
+        $this->saveSessionState($visitorId, $sessionId, 'chat', $mode, $visaType, $sessionState);
+
         $nextSessionId = $sessionId;
         $sessionCompleted = false;
 
-        if ($this->isSessionComplete($mode, $response, $history)) {
+        if ($this->isSessionComplete($mode, $coreResponse['content'], $history)) {
             AiMessage::where('visitor_id', $visitorId)
                 ->where('session_id', $sessionId)
                 ->where('mode', $mode)
                 ->where('visa_type', $visaType)
+                ->update(['completed_at' => now()]);
+            AiSessionState::where('visitor_id', $visitorId)
+                ->where('session_id', $sessionId)
+                ->where('experience', 'chat')
                 ->update(['completed_at' => now()]);
 
             $nextSessionId = (string) Str::uuid();
@@ -101,6 +107,7 @@ class AiMessageController extends Controller
             'assistant' => $assistantMessage,
             'session_completed' => $sessionCompleted,
             'session_reset' => $activeSession['timed_out'],
+            'session_state' => $sessionState,
         ], 201), $visitorId, $mode, $visaType, $nextSessionId);
     }
 
@@ -132,7 +139,12 @@ class AiMessageController extends Controller
             ->orderBy('created_at', 'asc')
             ->get(['id', 'role', 'content', 'agent_id', 'created_at', 'mode', 'visa_type']);
 
-        return $this->withAllSessionCookies(response()->json($messages), $visitorId, $sessionMap);
+        $activeSession = $this->activeSession($request, $visitorId, 'training', 'f1');
+
+        return $this->withAllSessionCookies(response()->json([
+            'messages' => $messages,
+            'session_state' => $this->sessionState($visitorId, $activeSession['session_id'], 'chat', 'training', 'f1'),
+        ]), $visitorId, $sessionMap);
     }
 
     public function restart(Request $request): JsonResponse
@@ -157,10 +169,15 @@ class AiMessageController extends Controller
             ->where('visa_type', $visaType)
             ->whereNull('completed_at')
             ->update(['completed_at' => now()]);
+        AiSessionState::where('visitor_id', $visitorId)
+            ->where('session_id', $sessionId)
+            ->where('experience', 'chat')
+            ->update(['completed_at' => now()]);
 
         return $this->withSessionCookies(response()->json([
             'messages' => [],
             'session_restarted' => true,
+            'session_state' => $this->defaultSessionState('chat'),
         ]), $visitorId, $mode, $visaType, (string) Str::uuid());
     }
 
@@ -178,14 +195,14 @@ class AiMessageController extends Controller
         $visitorId = $this->visitorId($request);
         $response = Http::timeout(20)
             ->acceptJson()
-            ->post($this->coreV2BaseUrl().'/sessions', [
+            ->post($this->coreV3BaseUrl().'/sessions', [
                 'mode' => $request->input('mode'),
                 'visa_type' => $request->input('visa_type'),
                 'visitor_id' => $visitorId,
             ]);
 
         if ($response->failed()) {
-            Log::error('Core V2 live session error', [
+            Log::error('Core V3 live session error', [
                 'status' => $response->status(),
                 'body' => $response->body(),
             ]);
@@ -199,165 +216,112 @@ class AiMessageController extends Controller
 
         return $this->withVisitorCookie(response()->json([
             'session_id' => $sessionId,
-            'ws_url' => rtrim(config('services.core_v2.ws_public_url'), '/').'/ws/'.$sessionId,
+            'ws_url' => rtrim(config('services.core_v3.ws_public_url'), '/').'/ws/'.$sessionId,
+            'session_state' => $this->defaultSessionState('live'),
         ]), $visitorId);
     }
 
-    private function callGemini(string $userMessage, array $history, string $mode, string $visaType): string
+    /**
+     * @return array{content: string, state: array<string, mixed>|null}
+     */
+    private function callCoreV3Chat(string $userMessage, array $history, string $mode, string $visaType): array
     {
         if (! filled(config('services.gemini.api_key'))) {
             throw new \RuntimeException('Gemini API key is not configured.');
         }
 
-        $assistantCount = collect($history)->where('role', 'assistant')->count();
-        $messages = [
-            ['role' => 'system', 'content' => $this->buildSystemPrompt($mode, $visaType, $assistantCount, empty($history))],
-        ];
+        $response = Http::timeout(60)
+            ->acceptJson()
+            ->post($this->coreV3BaseUrl().'/chat', [
+                'content' => $userMessage,
+                'history' => $history,
+                'mode' => $mode,
+                'visa_type' => $visaType,
+                'session_target' => self::SESSION_TARGET,
+                'gemini' => [
+                    'api_key' => config('services.gemini.api_key'),
+                    'model' => config('services.gemini.model', 'gemini-2.5-flash'),
+                    'fallback_model' => config('services.gemini.fallback_model', 'gemini-2.0-flash-lite'),
+                ],
+            ]);
 
-        foreach ($history as $message) {
-            $messages[] = [
-                'role' => $message['role'],
-                'content' => $message['content'],
-            ];
-        }
-
-        $messages[] = ['role' => 'user', 'content' => $userMessage];
-
-        return $this->callGeminiApi($messages);
-    }
-
-    private function buildSystemPrompt(string $mode, string $visaType, int $assistantCount, bool $isEmpty): string
-    {
-        $sections = [
-            $this->corePrompt('identity'),
-            $this->corePrompt('start_conversation'),
-            $this->selectionOverride($mode, $visaType),
-            $this->corePrompt($mode === 'training' ? 'training_mode' : 'real_interview_mode'),
-            $this->corePrompt($visaType === 'b1_b2' ? 'b1_b2_visitor_visa' : 'f1_student_visa'),
-            $this->corePrompt('voice_style'),
-        ];
-
-        if ($mode === 'training') {
-            if ($isEmpty) {
-                $sections[] = 'START NOW: Begin with the exact selected visa opening, then ask the first realistic question. Do not provide feedback until the applicant answers.';
-            }
-
-            $sections[] = "TRAINING RESPONSE FORMAT:\nStrengths:\n- ...\n\nWeaknesses:\n- ...\n\nImprovement Suggestions:\n- ...\n\nRetry:\n[Ask the applicant to answer the same question again.]";
-
-            return implode("\n\n---\n\n", $sections);
-        }
-
-        $shouldReport = $assistantCount >= self::SESSION_TARGET;
-
-        if ($shouldReport) {
-            $sections[] = $this->corePrompt('evaluation');
-            $sections[] = $this->corePrompt('motivation');
-            $sections[] = 'FINAL REPORT NOW: The real interview target has been reached. Do not ask another interview question. Create the Interview Performance Report and personal coaching message now.';
-
-            return implode("\n\n---\n\n", $sections);
-        }
-
-        $sections[] = $this->corePrompt('evaluation');
-        $sections[] = $this->corePrompt('motivation');
-        $sections[] = "REAL INTERVIEW COMPLETION CONTROL:\n- The target interview length is ".self::SESSION_TARGET." officer questions.\n- Track the number of officer questions asked in this conversation.\n- Assistant responses already given in this session: {$assistantCount}.\n- Questions remaining before final evaluation: ".max(self::SESSION_TARGET - $assistantCount, 0).".\n- If the target is reached, provide the Interview Performance Report and motivational message now.\n- Otherwise ask exactly one realistic next question.";
-
-        if ($isEmpty) {
-            $sections[] = 'START NOW: Begin with the exact selected visa opening. Ask only that opening/first officer prompt and no feedback.';
-        }
-
-        return implode("\n\n---\n\n", $sections);
-    }
-
-    private function corePrompt(string $name): string
-    {
-        $path = base_path("core_v2/prompts/{$name}.md");
-
-        if (! File::exists($path)) {
-            throw new \RuntimeException("Core prompt file [{$name}] is missing.");
-        }
-
-        return trim(File::get($path));
-    }
-
-    private function selectionOverride(string $mode, string $visaType): string
-    {
-        return "APPLICATION SELECTION OVERRIDE:\n"
-            .'The app has already selected mode and visa type. Do not ask the user to choose mode or visa type again. '
-            .'Start and continue directly as '.($mode === 'training' ? 'Training Session' : 'Real Interview Simulation').' for '
-            .($visaType === 'b1_b2' ? 'B1/B2 Visitor Visa' : 'F-1 Student Visa').'.';
-    }
-
-    private function callGeminiApi(array $messages): string
-    {
-        $apiKey = config('services.gemini.api_key');
-        $models = collect([
-            config('services.gemini.model', 'gemini-2.5-flash'),
-            config('services.gemini.fallback_model', 'gemini-2.0-flash-lite'),
-        ])
-            ->filter()
-            ->unique()
-            ->values();
-
-        $systemInstruction = null;
-        $contents = [];
-
-        foreach ($messages as $message) {
-            if ($message['role'] === 'system') {
-                $systemInstruction = $message['content'];
-
-                continue;
-            }
-
-            $contents[] = [
-                'role' => $message['role'] === 'assistant' ? 'model' : 'user',
-                'parts' => [['text' => $message['content']]],
-            ];
-        }
-
-        $payload = ['contents' => $contents];
-
-        if ($systemInstruction) {
-            $payload['systemInstruction'] = ['parts' => [['text' => $systemInstruction]]];
-        }
-
-        foreach ($models as $model) {
-            $response = $this->postGeminiRequest((string) $model, (string) $apiKey, $payload);
-
-            if ($response->successful()) {
-                return $response->json('candidates.0.content.parts.0.text') ?? 'No response received.';
-            }
-
-            Log::error('Gemini API error', [
-                'model' => $model,
+        if ($response->failed()) {
+            Log::error('Core V3 chat error', [
                 'status' => $response->status(),
                 'body' => $response->body(),
             ]);
 
-            if (! in_array($response->status(), [429, 503, 504], true)) {
-                throw new \RuntimeException('Sorry, I could not connect to the AI provider. Please check the Gemini API key and model settings.');
-            }
+            $detail = $response->json('detail');
+
+            throw new \RuntimeException(is_string($detail) ? $detail : 'Officer Charles could not process that message.');
         }
 
-        throw new \RuntimeException('The AI provider is temporarily busy. Please wait a few seconds and send your answer again.');
+        return [
+            'content' => $response->json('content') ?? 'No response received.',
+            'state' => $response->json('state'),
+        ];
     }
 
-    private function postGeminiRequest(string $model, string $apiKey, array $payload)
-    {
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=".urlencode($apiKey);
-
-        return Http::retry(3, 700, fn ($exception) => $exception instanceof RequestException
-            && $exception->response
-            && in_array($exception->response->status(), [429, 503, 504], true), throw: false)
-            ->timeout(45)
-            ->withHeaders([
-                'Content-Type' => 'application/json',
-            ])
-            ->post($url, $payload);
+    private function saveSessionState(
+        string $visitorId,
+        string $sessionId,
+        string $experience,
+        ?string $mode,
+        ?string $visaType,
+        array $state,
+    ): void {
+        AiSessionState::updateOrCreate(
+            [
+                'visitor_id' => $visitorId,
+                'session_id' => $sessionId,
+                'experience' => $experience,
+            ],
+            [
+                'mode' => $mode,
+                'visa_type' => $visaType,
+                'state' => $state,
+                'completed_at' => ! empty($state['completed']) ? now() : null,
+            ],
+        );
     }
 
-    private function coreV2BaseUrl(): string
+    private function sessionState(
+        string $visitorId,
+        string $sessionId,
+        string $experience,
+        ?string $mode,
+        ?string $visaType,
+    ): array {
+        $sessionState = AiSessionState::where('visitor_id', $visitorId)
+            ->where('session_id', $sessionId)
+            ->where('experience', $experience)
+            ->whereNull('completed_at')
+            ->first(['state']);
+
+        return is_array($sessionState?->state) ? $sessionState->state : $this->defaultSessionState($experience, $mode, $visaType);
+    }
+
+    private function defaultSessionState(string $experience, ?string $mode = null, ?string $visaType = null): array
     {
-        return rtrim(config('services.core_v2.base_url'), '/');
+        return [
+            'experience' => $experience,
+            'phase' => 'mode_selection',
+            'selected_mode' => null,
+            'selected_visa_type' => null,
+            'interview_status' => 'setup',
+            'current_question' => null,
+            'current_question_index' => 0,
+            'total_questions' => 0,
+            'answered_questions' => [],
+            'last_answer_quality' => null,
+            'evaluation_ready' => false,
+            'completed' => false,
+        ];
+    }
+
+    private function coreV3BaseUrl(): string
+    {
+        return rtrim(config('services.core_v3.base_url'), '/');
     }
 
     private function visitorId(Request $request): string

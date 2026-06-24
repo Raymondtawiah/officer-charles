@@ -1,0 +1,9 @@
+[2026-06-25 02:00:06] [Payload] Plugin initialized with empty payload.
+[2026-06-25 02:00:06] [Service] Initialized
+[2026-06-25 02:00:06] [LiveInterviewAssistant] OpenAI Starting.
+[2026-06-25 02:00:06] [LiveInterviewAssistant] OpenAI Ready.
+[2026-06-25 02:00:09] [LiveInterviewAssistant] WSC: Connection Closed! Error =Connection is already closed.. Re-Connecting ...
+[2026-06-25 02:00:09] [LiveInterviewAssistant] OpenAI Starting.
+[2026-06-25 02:00:09] [LiveInterviewAssistant] OpenAI Ready.
+[2026-06-25 02:00:14] [LiveInterviewAssistant] WSC error: 'NoneType' object has no attribute 'sock'
+[2026-06-25 02:10:06] [LiveInterviewAssistant] Sent keep-alive ping (audio buffer clear)
