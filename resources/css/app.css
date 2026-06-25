@@ -1326,3 +1326,422 @@
         }
     }
 }
+
+@layer components {
+    .oc-header {
+        padding: 0.85rem 1rem;
+    }
+
+    .oc-header-inner {
+        display: flex !important;
+        width: min(100%, 88rem);
+        margin: 0 auto;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+
+    .oc-brand-row,
+    .oc-header-actions {
+        display: flex;
+        align-items: center;
+    }
+
+    .oc-brand-row {
+        min-width: 0;
+        gap: 0.75rem;
+    }
+
+    .oc-heading {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 1.05rem;
+        font-weight: 800;
+        line-height: 1.15;
+    }
+
+    .oc-header-actions {
+        min-width: 0;
+        justify-content: flex-end;
+        gap: 0.65rem;
+    }
+
+    .oc-header-restart {
+        min-width: 7.25rem;
+        margin-top: 0;
+        white-space: nowrap;
+    }
+
+    .oc-mode-control {
+        width: auto;
+        min-width: min(100%, 19rem);
+    }
+
+    .oc-mode-button span {
+        white-space: nowrap;
+    }
+
+    .oc-experience-main {
+        flex: 1 1 auto;
+        min-height: 0;
+        width: 100%;
+        padding: clamp(0.75rem, 2vw, 1.35rem);
+        overflow: hidden;
+    }
+
+    .oc-chat-layout,
+    .oc-live-layout {
+        display: grid;
+        width: min(100%, 88rem);
+        height: 100%;
+        min-height: 0;
+        margin: 0 auto;
+        gap: clamp(0.85rem, 1.8vw, 1.25rem);
+    }
+
+    .oc-chat-layout {
+        grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr) minmax(18rem, 21rem);
+    }
+
+    .oc-live-layout {
+        grid-template-columns: minmax(0, 1fr) minmax(22rem, 27rem);
+    }
+
+    .oc-chat-primary-panel,
+    .oc-live-transcript-panel {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .oc-live-transcript-panel {
+        flex: 1 1 auto;
+        min-height: 14rem;
+    }
+
+    .oc-chat-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding: clamp(0.9rem, 2vw, 1.35rem);
+    }
+
+    .oc-transcript-inner {
+        display: flex;
+        width: min(100%, 52rem);
+        min-height: 100%;
+        margin: 0 auto;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .oc-chat-primary-panel .oc-transcript-inner {
+        justify-content: flex-end;
+    }
+
+    .oc-composer-wrap {
+        padding: 0.85rem;
+    }
+
+    .oc-error-banner {
+        margin: 0 0 0.65rem;
+    }
+
+    .oc-assistant-portrait-panel,
+    .oc-live-side {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+        gap: 0.85rem;
+    }
+
+    .oc-assistant-portrait,
+    .oc-session-summary-panel {
+        border: 1px solid var(--oc-border);
+        border-radius: 1.25rem;
+        background: var(--oc-surface);
+        box-shadow: var(--oc-shadow);
+        backdrop-filter: blur(24px);
+    }
+
+    .oc-assistant-portrait {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        flex-direction: column;
+        justify-content: flex-end;
+        overflow: hidden;
+    }
+
+    .oc-assistant-portrait-media {
+        display: flex;
+        min-height: 0;
+        flex: 1 1 auto;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 1rem 0.6rem 0;
+        background:
+            radial-gradient(circle at 50% 18%, color-mix(in oklab, var(--oc-accent) 17%, transparent), transparent 17rem),
+            linear-gradient(180deg, color-mix(in oklab, var(--oc-accent-2) 9%, transparent), transparent);
+    }
+
+    .oc-assistant-portrait-image {
+        width: min(100%, 18rem);
+        max-height: 100%;
+        object-fit: contain;
+        object-position: bottom center;
+        pointer-events: none;
+        user-select: none;
+    }
+
+    .oc-assistant-portrait-status {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.45rem;
+        border-top: 1px solid var(--oc-border);
+        padding: 0.85rem;
+        color: var(--oc-muted);
+        font-size: 0.82rem;
+        font-weight: 750;
+        text-align: center;
+    }
+
+    .oc-speaking-dot {
+        width: 0.55rem;
+        height: 0.55rem;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--oc-success);
+    }
+
+    .oc-speaking-dot.is-active {
+        background: var(--oc-danger);
+        animation: oc-live-pulse 1.2s ease-in-out infinite;
+    }
+
+    .oc-session-summary-panel {
+        display: flex;
+        flex: 0 0 auto;
+        flex-direction: column;
+        gap: 0.75rem;
+        min-height: 0;
+        padding: 0.95rem;
+    }
+
+    .oc-progress-block {
+        border: 1px solid var(--oc-border);
+        border-radius: 0.95rem;
+        background: var(--oc-surface-soft);
+        padding: 0.75rem;
+    }
+
+    .oc-live-stage {
+        height: 100%;
+        min-height: 0;
+        border-radius: 1.35rem;
+        padding: clamp(1rem, 2vw, 1.5rem);
+    }
+
+    .oc-live-main {
+        grid-template-columns: 1fr;
+        height: 100%;
+        align-content: center;
+        gap: clamp(0.75rem, 2vh, 1.25rem);
+    }
+
+    .oc-live-avatar-wrap {
+        width: min(100%, 35rem);
+        min-height: clamp(18rem, 56vh, 42rem);
+    }
+
+    .oc-live-avatar {
+        max-height: clamp(18rem, 64vh, 44rem);
+    }
+
+    .oc-live-copy {
+        max-width: 34rem;
+        text-align: center;
+    }
+
+    .oc-live-copy .oc-empty-title {
+        font-size: clamp(1.55rem, 3vw, 2.35rem);
+    }
+
+    .oc-live-copy .oc-empty-copy {
+        margin-top: 0.65rem;
+    }
+
+    .oc-live-control-wrap {
+        border: 1px solid var(--oc-border);
+        border-radius: 1.2rem;
+        background: var(--oc-surface);
+        padding: 0.75rem;
+        box-shadow: var(--oc-shadow-soft);
+    }
+
+    .oc-live-control-panel {
+        width: 100%;
+        min-height: 4rem;
+        border-radius: 1rem;
+        box-shadow: none;
+    }
+
+    .oc-live-empty {
+        display: flex;
+        min-height: 100%;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.55rem;
+        color: var(--oc-muted);
+        text-align: center;
+    }
+
+    .oc-live-empty h3 {
+        color: var(--oc-text);
+        font-size: 1rem;
+        font-weight: 800;
+    }
+
+    .oc-live-empty p {
+        max-width: 19rem;
+        font-size: 0.86rem;
+        line-height: 1.5;
+    }
+
+    .oc-mobile-summary {
+        display: none;
+    }
+
+    @media (max-width: 1180px) {
+        .oc-chat-layout {
+            grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+        }
+
+        .oc-chat-layout > .oc-sidebar-shell {
+            display: none;
+        }
+    }
+
+    @media (max-width: 1023px) {
+        .oc-header {
+            padding: 0.75rem;
+        }
+
+        .oc-header-inner {
+            display: grid !important;
+            grid-template-columns: 1fr;
+            gap: 0.75rem;
+        }
+
+        .oc-header-actions {
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 0.55rem;
+        }
+
+        .oc-mode-control {
+            min-width: 0;
+            width: 100%;
+        }
+
+        .oc-experience-main {
+            overflow-y: auto;
+        }
+
+        .oc-chat-layout,
+        .oc-live-layout {
+            height: auto;
+            min-height: 100%;
+            grid-template-columns: 1fr;
+        }
+
+        .oc-assistant-portrait {
+            min-height: 20rem;
+        }
+
+        .oc-assistant-portrait-panel .oc-mobile-summary {
+            display: flex;
+        }
+
+        .oc-chat-primary-panel,
+        .oc-live-transcript-panel {
+            min-height: 32rem;
+        }
+
+        .oc-live-stage {
+            min-height: clamp(28rem, 66vh, 40rem);
+        }
+
+        .oc-live-side {
+            min-height: 38rem;
+        }
+    }
+
+    @media (max-width: 640px) {
+        .oc-header-actions {
+            grid-template-columns: 1fr auto;
+        }
+
+        .oc-mode-control {
+            grid-column: 1 / -1;
+            order: -1;
+        }
+
+        .oc-header-restart {
+            min-width: 0;
+            padding-inline: 0.8rem;
+        }
+
+        .oc-header-restart span {
+            display: none;
+        }
+
+        .oc-mode-button {
+            gap: 0.35rem;
+            padding: 0 0.45rem;
+        }
+
+        .oc-mode-button span {
+            font-size: 0.72rem;
+        }
+
+        .oc-experience-main {
+            padding: 0.65rem;
+        }
+
+        .oc-assistant-portrait {
+            min-height: 17rem;
+        }
+
+        .oc-assistant-portrait-image {
+            width: min(100%, 13rem);
+        }
+
+        .oc-chat-primary-panel,
+        .oc-live-transcript-panel {
+            min-height: 28rem;
+        }
+
+        .oc-live-stage {
+            min-height: 26rem;
+            padding: 0.85rem;
+        }
+
+        .oc-live-avatar-wrap {
+            width: min(100%, 18rem);
+            min-height: clamp(13rem, 38vh, 20rem);
+        }
+
+        .oc-live-avatar {
+            max-height: clamp(13rem, 42vh, 22rem);
+        }
+
+        .oc-live-side {
+            min-height: 34rem;
+        }
+    }
+}

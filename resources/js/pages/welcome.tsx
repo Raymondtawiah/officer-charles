@@ -4,7 +4,6 @@ import {
     ArrowUp,
     BadgeCheck,
     GraduationCap,
-    HelpCircle,
     Keyboard,
     Loader2,
     MessageSquareText,
@@ -12,12 +11,11 @@ import {
     Moon,
     PhoneOff,
     Radio,
-    RefreshCw,
     RotateCcw,
     Sun,
     User,
 } from 'lucide-react';
-import type { FormEvent, KeyboardEvent} from 'react';
+import type { FormEvent, KeyboardEvent, ReactNode, RefObject } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -191,7 +189,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
     return window.btoa(binary);
 }
 
-function base64ToInt16Array(value: string) {
+function base64ToUint8Array(value: string) {
     const binary = window.atob(value);
     const bytes = new Uint8Array(binary.length);
 
@@ -199,11 +197,7 @@ function base64ToInt16Array(value: string) {
         bytes[index] = binary.charCodeAt(index);
     }
 
-    return new Int16Array(bytes.buffer);
-}
-
-function isBase64Audio(value: string) {
-    return /^[A-Za-z0-9+/]+={0,2}$/.test(value) && value.length % 4 === 0;
+    return bytes;
 }
 
 function downsampleBuffer(buffer: Float32Array, inputSampleRate: number, outputSampleRate: number) {
@@ -272,7 +266,6 @@ export function ChatExperience({ messages }: Props) {
     const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
     const liveRecordingRef = useRef(false);
     const liveAssistantIdRef = useRef<number | null>(null);
-    const nextAudioStartRef = useRef(0);
     const liveAudioPlayingRef = useRef(0);
 
     const mode = DEFAULT_MODE;
@@ -281,7 +274,6 @@ export function ChatExperience({ messages }: Props) {
         () => chatMessages.filter((message) => message.mode === mode && (message.visa_type ?? 'f1') === visaType),
         [chatMessages, mode, visaType],
     );
-    const activeExperience = experienceContent[experienceMode];
     const liveSessionKey = `${mode}:${visaType}` as LiveSessionKey;
     const activeLiveMessages = liveMessagesBySession[liveSessionKey] ?? emptyLiveMessages;
     const activeSessionState = experienceMode === 'live' ? liveSessionState : chatSessionState;
@@ -407,7 +399,7 @@ return;
             if (!response.ok) {
                 const contentError = payload?.errors?.content?.[0];
 
-                throw new Error(contentError || 'Officer Charles could not process that message. Please try again.');
+                throw new Error(contentError || payload?.message || 'Officer Charles could not process that message. Please try again.');
             }
 
             const data = payload as StoreMessageResponse;
@@ -570,37 +562,30 @@ return;
         }));
     }, [liveSessionKey, mode, visaType]);
 
-    const playLiveAudio = useCallback((audioBase64: string) => {
-        const audioContext = audioContextRef.current;
-
-        if (!audioContext) {
+    const playDirectAudio = useCallback((audioBase64: string, mimeType = 'audio/mpeg') => {
+        if (!audioBase64) {
 return;
 }
 
-        const pcm = base64ToInt16Array(audioBase64);
-        const buffer = audioContext.createBuffer(1, pcm.length, 24000);
-        const channel = buffer.getChannelData(0);
+        const bytes = base64ToUint8Array(audioBase64);
+        const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+        const audio = new Audio(url);
 
-        for (let index = 0; index < pcm.length; index += 1) {
-            channel[index] = pcm[index] / 32768;
-        }
-
-        const source = audioContext.createBufferSource();
-        source.buffer = buffer;
-        source.connect(audioContext.destination);
-
-        const startAt = Math.max(audioContext.currentTime, nextAudioStartRef.current);
         liveAudioPlayingRef.current += 1;
         setLiveSpeaking(true);
-        source.onended = () => {
+
+        const finish = () => {
+            URL.revokeObjectURL(url);
             liveAudioPlayingRef.current = Math.max(0, liveAudioPlayingRef.current - 1);
 
             if (liveAudioPlayingRef.current === 0) {
                 setLiveSpeaking(false);
             }
         };
-        source.start(startAt);
-        nextAudioStartRef.current = startAt + buffer.duration;
+
+        audio.onended = finish;
+        audio.onerror = finish;
+        void audio.play().catch(finish);
     }, []);
 
     const stopLiveInterview = useCallback(() => {
@@ -649,14 +634,16 @@ return;
                 return;
             }
 
-            if (payload.type === 'text.delta') {
-                appendLiveAssistantDelta(payload.delta ?? payload.message ?? '');
+            if (payload.type === 'direct.reply') {
+                const message = payload.message ?? '';
+                appendLiveAssistantDelta(message);
+                finalizeLiveAssistant();
 
                 return;
             }
 
-            if (payload.type === 'text.completed') {
-                finalizeLiveAssistant();
+            if (payload.type === 'direct.audio') {
+                playDirectAudio(payload.audio ?? '', payload.mime_type ?? 'audio/mpeg');
 
                 return;
             }
@@ -667,11 +654,9 @@ return;
                 return;
             }
         } catch {
-            if (isBase64Audio(data)) {
-                playLiveAudio(data);
-            }
+            return;
         }
-    }, [addLiveUserMessage, appendLiveAssistantDelta, finalizeLiveAssistant, playLiveAudio]);
+    }, [addLiveUserMessage, appendLiveAssistantDelta, finalizeLiveAssistant, playDirectAudio]);
 
     const startAudioCapture = useCallback(async (socket: WebSocket) => {
         const audioContext = new AudioContext({ sampleRate: 24000 });
@@ -705,7 +690,6 @@ return;
         audioStreamRef.current = stream;
         audioSourceRef.current = source;
         audioProcessorRef.current = processor;
-        nextAudioStartRef.current = audioContext.currentTime;
     }, []);
 
     const startLiveInterview = async () => {
@@ -794,191 +778,94 @@ return;
     return (
         <main data-oc-theme={theme} className="oc-page h-dvh overflow-hidden font-sans">
             <div className="oc-shell flex h-full min-h-0 flex-col">
-                <header className="oc-header sticky top-0 z-30 px-4 py-4 sm:px-6">
-                    <div className="oc-header-inner mx-auto flex max-w-7xl flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="oc-brand-row flex min-w-0 items-center gap-3">
-                            <div className="oc-brand-mark">
-                                <GraduationCap className="h-5 w-5" />
-                            </div>
-                            <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <h1 className="oc-heading truncate text-base font-semibold sm:text-lg">Officer Charles</h1>
-                                    <Badge className="oc-premium-badge" variant="outline">
-                                        AI simulator
-                                    </Badge>
-                                </div>
-                                <p className="oc-subtle truncate text-xs sm:text-sm">Visa interview practice workspace</p>
-                            </div>
+                <InterviewHeader
+                    experienceMode={experienceMode}
+                    loading={loadingMessages || syncingMessages}
+                    onRestart={() => void restartActiveInterview()}
+                    onSelectMode={selectExperienceMode}
+                    onToggleTheme={() => setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))}
+                    restarting={restartingSession || liveConnecting}
+                    theme={theme}
+                />
+
+                <div className={cn('oc-experience-main', experienceMode === 'live' ? 'is-live' : 'is-chat')}>
+                    {experienceMode === 'live' ? (
+                        <div className="oc-live-layout">
+                            <LiveInterviewStage
+                                connected={liveConnected}
+                                connecting={liveConnecting}
+                                error={liveError}
+                                recording={liveRecording}
+                                speaking={liveSpeaking}
+                            />
+
+                            <section className="oc-live-side">
+                                <SessionProgressPanel
+                                    latestAssistant={activeSidebarAssistant}
+                                    experience={experienceContent.live}
+                                    sessionState={activeSessionState}
+                                    userCount={activeSidebarUserCount}
+                                />
+                                <section className="oc-chat-panel oc-live-transcript-panel">
+                                    <ChatTranscript
+                                        empty={<LiveTranscriptEmpty connected={liveConnected} />}
+                                        endRef={liveMessagesEndRef}
+                                        messages={activeLiveMessages}
+                                    />
+                                </section>
+                                <LiveMicControls
+                                    connected={liveConnected}
+                                    connecting={liveConnecting}
+                                    onEnd={stopLiveInterview}
+                                    onStart={startLiveInterview}
+                                    onToggleRecording={toggleLiveRecording}
+                                    recording={liveRecording}
+                                />
+                            </section>
                         </div>
+                    ) : (
+                        <div className="oc-chat-layout">
+                            <section className="oc-assistant-portrait-panel">
+                                <AssistantPortrait talking={submitting} />
+                                <MobileSummary
+                                    experience={experienceContent.chat}
+                                    sessionState={activeSessionState}
+                                    userCount={activeSidebarUserCount}
+                                />
+                            </section>
 
-                        <div className="oc-header-actions flex flex-wrap items-center gap-2">
-                            <div className="oc-status-pill">
-                                <span className={cn('h-2 w-2 rounded-full', syncingMessages ? 'animate-pulse bg-amber-400' : 'bg-emerald-400')} />
-                                {syncingMessages ? 'Syncing API' : activeExperience.status}
-                            </div>
+                            <section className="oc-chat-panel oc-chat-primary-panel">
+                                <ChatTranscript
+                                    empty={loadingMessages ? <LoadingState /> : <EmptyState onSelectPrompt={setDraft} />}
+                                    endRef={messagesEndRef}
+                                    messages={loadingMessages ? [] : activeSessionMessages}
+                                    thinking={submitting}
+                                />
+                                <ChatComposer
+                                    draft={draft}
+                                    error={error}
+                                    onChange={setDraft}
+                                    onKeyDown={handleKeyDown}
+                                    onSubmit={handleSubmit}
+                                    submitting={submitting}
+                                    textareaRef={textareaRef}
+                                />
+                            </section>
 
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => void loadMessages(false)}
-                                disabled={loadingMessages || syncingMessages || submitting || restartingSession}
-                                className="oc-icon-button"
-                                aria-label="Refresh chat messages"
-                            >
-                                <RefreshCw className={cn('h-4 w-4', (loadingMessages || syncingMessages) && 'animate-spin')} />
-                            </Button>
-
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => void restartActiveInterview()}
-                                disabled={loadingMessages || syncingMessages || submitting || restartingSession || liveConnecting}
-                                className="oc-icon-button"
-                                aria-label={`Restart ${activeExperience.shortLabel.toLowerCase()} interview`}
-                            >
-                                <RotateCcw className={cn('h-4 w-4', (restartingSession || liveConnecting) && 'animate-spin')} />
-                            </Button>
-
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))}
-                                className="oc-icon-button"
-                                aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-                            >
-                                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                            </Button>
-
-                            <div className="oc-mode-control">
-                                {(['chat', 'live'] as ExperienceMode[]).map((option) => (
-                                    <button
-                                        key={option}
-                                        type="button"
-                                        onClick={() => selectExperienceMode(option)}
-                                        className={cn('oc-mode-button', experienceMode === option && 'is-active is-training')}
-                                    >
-                                        {option === 'chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
-                                        <span className="hidden sm:inline">{experienceContent[option].label}</span>
-                                        <span className="sm:hidden">{experienceContent[option].shortLabel}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </header>
-
-                <div className="oc-dashboard-grid mx-auto grid min-h-0 w-full max-w-7xl flex-1 grid-cols-1 gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:py-7">
-                    <section className="oc-chat-panel flex min-w-0 flex-col overflow-hidden">
-                        <div className="oc-chat-scroll flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
-                            <div className="mx-auto flex max-w-3xl flex-col gap-5">
-                                <div className="oc-mobile-sidebar lg:hidden">
-                                    <MobileSummary
-                                        experience={activeExperience}
+                            <aside className="oc-sidebar-shell">
+                                <div className="oc-sidebar-stack">
+                                    <SidebarCards
+                                        latestAssistant={activeSidebarAssistant}
+                                        onRestart={() => void restartActiveInterview()}
+                                        restartingSession={restartingSession}
+                                        experience={experienceContent.chat}
                                         sessionState={activeSessionState}
                                         userCount={activeSidebarUserCount}
                                     />
                                 </div>
-
-                                {experienceMode === 'chat' ? (
-                                    <>
-                                        {loadingMessages ? (
-                                            <LoadingState />
-                                        ) : activeSessionMessages.length === 0 ? (
-                                            <EmptyState onSelectPrompt={setDraft} />
-                                        ) : (
-                                            activeSessionMessages.map((message) => <MessageBubble key={message.localId ?? message.id} message={message} />)
-                                        )}
-
-                                        {submitting && <ThinkingBubble />}
-                                        <div ref={messagesEndRef} />
-                                    </>
-                                ) : (
-                                    <>
-                                        <LiveInterviewStage
-                                            connected={liveConnected}
-                                            connecting={liveConnecting}
-                                            error={liveError}
-                                            recording={liveRecording}
-                                            speaking={liveSpeaking}
-                                        />
-                                        {activeLiveMessages.map((message) => <MessageBubble key={message.localId ?? message.id} message={message} />)}
-                                        <div ref={liveMessagesEndRef} />
-                                    </>
-                                )}
-                            </div>
+                            </aside>
                         </div>
-
-                        {experienceMode === 'chat' && (
-                            <footer className="oc-composer-wrap px-4 py-4 sm:px-6">
-                                <div className="mx-auto max-w-3xl">
-                                    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                        <div className="oc-helper-pill">
-                                            <HelpCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                                            <span>Officer Charles will handle setup inside the conversation.</span>
-                                        </div>
-                                        <Badge className="oc-mode-badge" variant="outline">
-                                            Assistant-led setup
-                                        </Badge>
-                                    </div>
-
-                                    {error && (
-                                        <div className="oc-error-banner">
-                                            <RefreshCw className="h-4 w-4 shrink-0" />
-                                            <span>{error}</span>
-                                        </div>
-                                    )}
-
-                                    <form onSubmit={handleSubmit} className="oc-composer">
-                                        <textarea
-                                            ref={textareaRef}
-                                            value={draft}
-                                            onChange={(event) => setDraft(event.target.value)}
-                                            onKeyDown={handleKeyDown}
-                                            placeholder="Reply to Officer Charles..."
-                                            rows={1}
-                                            disabled={submitting}
-                                            className="oc-textarea"
-                                        />
-                                        <Button
-                                            type="submit"
-                                            size="icon"
-                                            disabled={submitting || !draft.trim()}
-                                            className="oc-send-button"
-                                        >
-                                            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
-                                        </Button>
-                                    </form>
-                                </div>
-                            </footer>
-                        )}
-
-                        {experienceMode === 'live' && (
-                            <LiveMicControls
-                                connected={liveConnected}
-                                connecting={liveConnecting}
-                                onEnd={stopLiveInterview}
-                                onStart={startLiveInterview}
-                                onToggleRecording={toggleLiveRecording}
-                                recording={liveRecording}
-                            />
-                        )}
-                    </section>
-
-                    <aside className="oc-sidebar-shell hidden min-w-0 lg:block">
-                        <div className="oc-sidebar-stack">
-                            <SidebarCards
-                                latestAssistant={activeSidebarAssistant}
-                                onRestart={() => void restartActiveInterview()}
-                                restartingSession={restartingSession || liveConnecting}
-                                experience={activeExperience}
-                                sessionState={activeSessionState}
-                                userCount={activeSidebarUserCount}
-                            />
-                        </div>
-                    </aside>
+                    )}
                 </div>
             </div>
         </main>
@@ -991,6 +878,251 @@ export default function VisaAi({ messages }: Props) {
             <Head title="Officer Charles - Visa Interview Prep" />
             <ChatExperience messages={messages} />
         </>
+    );
+}
+
+function InterviewHeader({
+    experienceMode,
+    loading,
+    onRestart,
+    onSelectMode,
+    onToggleTheme,
+    restarting,
+    theme,
+}: {
+    experienceMode: ExperienceMode;
+    loading: boolean;
+    onRestart: () => void;
+    onSelectMode: (mode: ExperienceMode) => void;
+    onToggleTheme: () => void;
+    restarting: boolean;
+    theme: ThemeMode;
+}) {
+    return (
+        <header className="oc-header sticky top-0 z-30">
+            <div className="oc-header-inner">
+                <div className="oc-brand-row">
+                    <div className="oc-brand-mark">
+                        <GraduationCap className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                        <h1 className="oc-heading">Officer Charles</h1>
+                        <p className="oc-subtle">Visa interview practice workspace</p>
+                    </div>
+                </div>
+
+                <div className="oc-header-actions">
+                    <ModeToggle experienceMode={experienceMode} onSelectMode={onSelectMode} />
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={onRestart}
+                        disabled={loading || restarting}
+                        className="oc-restart-button oc-header-restart"
+                    >
+                        <RotateCcw className={cn('h-4 w-4', restarting && 'animate-spin')} />
+                        <span>Restart</span>
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={onToggleTheme}
+                        className="oc-icon-button"
+                        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+                    >
+                        {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                    </Button>
+                </div>
+            </div>
+        </header>
+    );
+}
+
+function ModeToggle({
+    experienceMode,
+    onSelectMode,
+}: {
+    experienceMode: ExperienceMode;
+    onSelectMode: (mode: ExperienceMode) => void;
+}) {
+    return (
+        <div className="oc-mode-control">
+            {(['chat', 'live'] as ExperienceMode[]).map((option) => (
+                <button
+                    key={option}
+                    type="button"
+                    onClick={() => onSelectMode(option)}
+                    className={cn('oc-mode-button', experienceMode === option && 'is-active')}
+                >
+                    {option === 'chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
+                    <span>{experienceContent[option].label}</span>
+                </button>
+            ))}
+        </div>
+    );
+}
+
+function AssistantPortrait({ talking }: { talking: boolean }) {
+    return (
+        <section className={cn('oc-assistant-portrait', talking && 'is-talking')}>
+            <div className="oc-assistant-portrait-media">
+                <img
+                    src={talking ? '/assets/images/assistant.gif' : '/assets/images/assistant.png'}
+                    alt="Officer Charles assistant"
+                    className="oc-assistant-portrait-image"
+                    draggable="false"
+                />
+            </div>
+            <div className="oc-assistant-portrait-status">
+                <span className={cn('oc-speaking-dot', talking && 'is-active')} />
+                <span>{talking ? 'Officer Charles is responding' : 'Officer Charles is ready'}</span>
+            </div>
+        </section>
+    );
+}
+
+function SessionProgressPanel({
+    latestAssistant,
+    experience,
+    sessionState,
+    userCount,
+}: {
+    experience: (typeof experienceContent)[ExperienceMode];
+    latestAssistant?: ChatMessage;
+    sessionState: InterviewSessionState | null;
+    userCount: number;
+}) {
+    const answeredCount = sessionState?.answered_questions.length ?? 0;
+    const totalQuestions = sessionState?.total_questions ?? 0;
+    const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : 0;
+
+    return (
+        <section className="oc-session-summary-panel">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className="oc-kicker">Officer</p>
+                    <h2 className="oc-card-title">Officer Charles</h2>
+                </div>
+                <Badge className="oc-mode-badge" variant="outline">
+                    {experience.label}
+                </Badge>
+            </div>
+
+            <div className="oc-progress-block">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                    <span className="oc-subtle text-xs">{totalQuestions > 0 ? `${answeredCount} of ${totalQuestions} answered` : 'Progress starts after setup'}</span>
+                    <span className="oc-progress-value">{progress}%</span>
+                </div>
+                <div className="oc-progress-track">
+                    <div className="oc-progress-bar" style={{ width: `${progress}%` }} />
+                </div>
+            </div>
+
+            <div className="oc-session-stats grid grid-cols-2 gap-2">
+                <div>
+                    <span>{formatSelectedMode(sessionState?.selected_mode)}</span>
+                    <p>Practice mode</p>
+                </div>
+                <div>
+                    <span>{formatVisaType(sessionState?.selected_visa_type)}</span>
+                    <p>Visa type</p>
+                </div>
+            </div>
+
+            <div className="oc-latest-response">
+                <p className="oc-kicker">Status</p>
+                <p>{formatPhase(sessionState?.phase)}</p>
+            </div>
+            <div className="oc-latest-response">
+                <p className="oc-kicker">Latest response</p>
+                <p>{textPreview(latestAssistant?.content)}</p>
+            </div>
+            <p className="oc-subtle text-xs">{userCount} user answers in this session</p>
+        </section>
+    );
+}
+
+function ChatTranscript({
+    empty,
+    endRef,
+    messages,
+    thinking = false,
+}: {
+    empty: ReactNode;
+    endRef: RefObject<HTMLDivElement | null>;
+    messages: ChatMessage[];
+    thinking?: boolean;
+}) {
+    return (
+        <div className="oc-chat-scroll">
+            <div className="oc-transcript-inner">
+                {messages.length === 0 ? empty : messages.map((message) => <MessageBubble key={message.localId ?? message.id} message={message} />)}
+                {thinking && <ThinkingBubble />}
+                <div ref={endRef} />
+            </div>
+        </div>
+    );
+}
+
+function ChatComposer({
+    draft,
+    error,
+    onChange,
+    onKeyDown,
+    onSubmit,
+    submitting,
+    textareaRef,
+}: {
+    draft: string;
+    error: string | null;
+    onChange: (draft: string) => void;
+    onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+    onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+    submitting: boolean;
+    textareaRef: RefObject<HTMLTextAreaElement | null>;
+}) {
+    return (
+        <footer className="oc-composer-wrap">
+            {error && (
+                <div className="oc-error-banner">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{error}</span>
+                </div>
+            )}
+
+            <form onSubmit={onSubmit} className="oc-composer">
+                <textarea
+                    ref={textareaRef}
+                    value={draft}
+                    onChange={(event) => onChange(event.target.value)}
+                    onKeyDown={onKeyDown}
+                    placeholder="Reply to Officer Charles..."
+                    rows={1}
+                    disabled={submitting}
+                    className="oc-textarea"
+                />
+                <Button
+                    type="submit"
+                    size="icon"
+                    disabled={submitting || !draft.trim()}
+                    className="oc-send-button"
+                    aria-label="Send message"
+                >
+                    {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+                </Button>
+            </form>
+        </footer>
+    );
+}
+
+function LiveTranscriptEmpty({ connected }: { connected: boolean }) {
+    return (
+        <div className="oc-live-empty">
+            <MessageSquareText className="h-6 w-6" />
+            <h3>{connected ? 'Transcript will appear here' : 'Start the live interview'}</h3>
+            <p>{connected ? 'Your spoken answers and Officer Charles responses will stream into this panel.' : 'Connect first, then use the mic control to answer questions.'}</p>
+        </div>
     );
 }
 
@@ -1218,7 +1350,7 @@ function LiveInterviewStage({
     recording: boolean;
     speaking: boolean;
 }) {
-    const avatarSrc = speaking || recording ? '/assets/images/assistant.gif' : '/assets/images/assistant.png';
+    const avatarSrc = speaking ? '/assets/images/assistant.gif' : '/assets/images/assistant.png';
 
     return (
         <section className="oc-live-stage">

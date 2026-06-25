@@ -1,6 +1,9 @@
 {
   "llm": "gpt-realtime-mini",
+  "tts_model": "gpt-4o-mini-tts",
   "stt": "whisper-1",
+  "stt_language": "en",
+  "stt_prompt": "The applicant is speaking English during a US visa interview practice session. Transcribe in English only.",
   "voice": "ash",
   "threshold": 0.5,
   "prefix_padding_ms": 300,

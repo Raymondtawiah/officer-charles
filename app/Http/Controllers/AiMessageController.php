@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AiMessage;
 use App\Models\AiSessionState;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -63,11 +64,11 @@ class AiMessageController extends Controller
 
         try {
             $coreResponse = $this->callCoreV3Chat($request->input('content'), $history, $mode, $visaType);
-        } catch (\RuntimeException $exception) {
+        } catch (ConnectionException|\RuntimeException $exception) {
             Log::error('Core V3 chat response error', ['message' => $exception->getMessage()]);
 
             return $this->withSessionCookies(response()->json([
-                'message' => $exception->getMessage(),
+                'message' => $this->coreV3UnavailableMessage($exception),
                 'user' => $userMessage,
             ], 502), $visitorId, $mode, $visaType, $sessionId);
         }
@@ -193,13 +194,21 @@ class AiMessageController extends Controller
         }
 
         $visitorId = $this->visitorId($request);
-        $response = Http::timeout(20)
-            ->acceptJson()
-            ->post($this->coreV3BaseUrl().'/sessions', [
-                'mode' => $request->input('mode'),
-                'visa_type' => $request->input('visa_type'),
-                'visitor_id' => $visitorId,
-            ]);
+        try {
+            $response = Http::timeout(20)
+                ->acceptJson()
+                ->post($this->coreV3BaseUrl().'/sessions', [
+                    'mode' => $request->input('mode'),
+                    'visa_type' => $request->input('visa_type'),
+                    'visitor_id' => $visitorId,
+                ]);
+        } catch (ConnectionException $exception) {
+            Log::error('Core V3 live session connection error', ['message' => $exception->getMessage()]);
+
+            return response()->json([
+                'message' => $this->coreV3UnavailableMessage($exception),
+            ], 502);
+        }
 
         if ($response->failed()) {
             Log::error('Core V3 live session error', [
@@ -260,6 +269,15 @@ class AiMessageController extends Controller
             'content' => $response->json('content') ?? 'No response received.',
             'state' => $response->json('state'),
         ];
+    }
+
+    private function coreV3UnavailableMessage(\Throwable $exception): string
+    {
+        if ($exception instanceof ConnectionException) {
+            return 'Officer Charles core service is not running. Please start Core V3 and try again.';
+        }
+
+        return $exception->getMessage();
     }
 
     private function saveSessionState(

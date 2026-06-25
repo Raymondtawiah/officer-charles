@@ -4,9 +4,48 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import laravel from 'laravel-vite-plugin';
 import { bunny } from 'laravel-vite-plugin/fonts';
-import { readFileSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
+
+function assistantAssetFallback(): Plugin {
+    const assets = new Map([
+        ['/assistant.gif', ['assets/images/assistant.gif', 'image/gif']],
+        ['/assets/images/assistant.gif', ['assets/images/assistant.gif', 'image/gif']],
+        ['/assistant.png', ['assets/images/assistant.png', 'image/png']],
+        ['/assets/images/assistant.png', ['assets/images/assistant.png', 'image/png']],
+    ]);
+
+    return {
+        name: 'assistant-asset-fallback',
+        configureServer(server) {
+            server.middlewares.use((request, response, next) => {
+                const pathname = request.url?.split('?')[0] ?? '';
+                const asset = assets.get(pathname);
+
+                if (!asset) {
+                    next();
+                    return;
+                }
+
+                const [relativePath, contentType] = asset;
+                const filePath = resolve(__dirname, 'public', relativePath);
+                const stat = statSync(filePath);
+
+                response.statusCode = 200;
+                response.setHeader('Content-Type', contentType);
+                response.setHeader('Content-Length', stat.size);
+
+                if (request.method === 'HEAD') {
+                    response.end();
+                    return;
+                }
+
+                createReadStream(filePath).pipe(response);
+            });
+        },
+    };
+}
 
 function reactRoot(): Plugin {
     return {
@@ -39,6 +78,7 @@ export default defineConfig({
         },
     },
     plugins: [
+        assistantAssetFallback(),
         reactRoot(),
         laravel({
             input: ['resources/css/app.css', 'resources/js/app.tsx'],
