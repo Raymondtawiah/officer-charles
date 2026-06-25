@@ -1,272 +1,1493 @@
-import { useState, useEffect, useRef } from 'react';
-import { Head, useForm } from '@inertiajs/react';
-import { ArrowUp, Loader2, Sparkles, User, ShieldCheck, GraduationCap, Flame, CheckCircle2, AlertTriangle, HelpCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Head } from '@inertiajs/react';
+import {
+    AlertCircle,
+    ArrowUp,
+    BadgeCheck,
+    GraduationCap,
+    Keyboard,
+    Loader2,
+    MessageSquareText,
+    Mic,
+    Moon,
+    PhoneOff,
+    Radio,
+    RotateCcw,
+    Sun,
+    User,
+} from 'lucide-react';
+import type { FormEvent, KeyboardEvent, ReactNode, RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-interface Message {
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+
+type MessageRole = 'user' | 'assistant';
+type InterviewMode = 'training' | 'interview';
+type VisaType = 'f1' | 'b1_b2';
+type ExperienceMode = 'chat' | 'live';
+type ThemeMode = 'dark' | 'light';
+type LiveSessionKey = `${InterviewMode}:${VisaType}`;
+
+interface ServerMessage {
     id: number;
-    role: 'user' | 'assistant';
+    role: MessageRole;
     content: string;
     created_at: string;
-    // Optional extensions for parsing diagnostic telemetry fields natively 
-    score?: number;
-    metrics?: {
-        strengths?: string[];
-        concerns?: string[];
-        recommendations?: string[];
+    mode?: InterviewMode | null;
+    visa_type?: VisaType | null;
+}
+
+interface ChatMessage extends ServerMessage {
+    localId?: string;
+    status?: 'pending' | 'failed';
+}
+
+interface StoreMessageResponse {
+    user: ServerMessage;
+    assistant: ServerMessage;
+    session_completed?: boolean;
+    session_reset?: boolean;
+    session_state?: InterviewSessionState | null;
+}
+
+interface MessagesResponse {
+    messages: ServerMessage[];
+    session_state?: InterviewSessionState | null;
+}
+
+interface InterviewSessionState {
+    experience: ExperienceMode;
+    phase: 'mode_selection' | 'visa_selection' | 'training' | 'interview' | 'evaluation' | 'completed';
+    selected_mode: InterviewMode | null;
+    selected_visa_type: VisaType | null;
+    interview_status: string;
+    current_question: string | null;
+    current_question_index: number;
+    total_questions: number;
+    answered_questions: string[];
+    last_answer_quality: string | null;
+    evaluation_ready: boolean;
+    completed: boolean;
+}
+
+const emptyLiveMessages: ChatMessage[] = [];
+const DEFAULT_MODE: InterviewMode = 'training';
+const DEFAULT_VISA_TYPE: VisaType = 'f1';
+const defaultChatSessionState: InterviewSessionState = {
+    experience: 'chat',
+    phase: 'mode_selection',
+    selected_mode: null,
+    selected_visa_type: null,
+    interview_status: 'setup',
+    current_question: null,
+    current_question_index: 0,
+    total_questions: 0,
+    answered_questions: [],
+    last_answer_quality: null,
+    evaluation_ready: false,
+    completed: false,
+};
+const defaultLiveSessionState: InterviewSessionState = {
+    ...defaultChatSessionState,
+    experience: 'live',
+};
+
+export interface Props {
+    messages: ServerMessage[];
+}
+
+const experienceContent = {
+    chat: {
+        label: 'Chat Interview',
+        shortLabel: 'Chat',
+        status: 'Text interview',
+    },
+    live: {
+        label: 'Live Interview',
+        shortLabel: 'Live',
+        status: 'Voice interview',
+    },
+} satisfies Record<ExperienceMode, Record<string, string>>;
+
+const starterPrompts = [
+    'Start my visa interview practice.',
+    'Begin a guided interview.',
+    'Help me practice with Officer Charles.',
+];
+
+function formatTime(value: string) {
+    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function isFinalReport(content: string) {
+    return content.includes('FINAL REPORT') || content.includes('Performance Report');
+}
+
+function textPreview(content?: string) {
+    if (!content) {
+        return 'No officer response yet.';
+    }
+
+    return content.replace(/\s+/g, ' ').trim().slice(0, 140);
+}
+
+function formatPhase(value?: InterviewSessionState['phase']) {
+    const labels: Record<InterviewSessionState['phase'], string> = {
+        mode_selection: 'Choosing practice mode',
+        visa_selection: 'Choosing visa type',
+        training: 'Training session',
+        interview: 'Interview questions',
+        evaluation: 'Evaluation',
+        completed: 'Completed',
     };
+
+    return value ? labels[value] : 'Waiting to begin';
 }
 
-interface Props {
-    messages: Message[];
+function formatSelectedMode(value?: InterviewMode | null) {
+    if (value === 'training') {
+        return 'Training Session';
+    }
+
+    if (value === 'interview') {
+        return 'Real Interview Simulation';
+    }
+
+    return 'Not selected yet';
 }
 
-type InterviewMode = 'TRAINING' | 'SIMULATION';
+function formatVisaType(value?: VisaType | null) {
+    if (value === 'f1') {
+        return 'F-1 Student Visa';
+    }
 
-export default function VisaAi({ messages }: Props) {
+    if (value === 'b1_b2') {
+        return 'B1/B2 Visitor Visa';
+    }
+
+    return 'Not selected yet';
+}
+
+function getInitialTheme(): ThemeMode {
+    if (typeof window === 'undefined') {
+        return 'dark';
+    }
+
+    return window.localStorage.getItem('officer-charles-theme') === 'light' ? 'light' : 'dark';
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+
+    return window.btoa(binary);
+}
+
+function base64ToUint8Array(value: string) {
+    const binary = window.atob(value);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+
+    return bytes;
+}
+
+function downsampleBuffer(buffer: Float32Array, inputSampleRate: number, outputSampleRate: number) {
+    if (outputSampleRate === inputSampleRate) {
+        return buffer;
+    }
+
+    const ratio = inputSampleRate / outputSampleRate;
+    const newLength = Math.round(buffer.length / ratio);
+    const result = new Float32Array(newLength);
+
+    for (let offset = 0; offset < result.length; offset += 1) {
+        const start = Math.floor(offset * ratio);
+        const end = Math.min(Math.floor((offset + 1) * ratio), buffer.length);
+        let sum = 0;
+
+        for (let index = start; index < end; index += 1) {
+            sum += buffer[index];
+        }
+
+        result[offset] = sum / Math.max(end - start, 1);
+    }
+
+    return result;
+}
+
+function floatToPcm16Base64(input: Float32Array, inputSampleRate: number, outputSampleRate = 24000) {
+    const samples = downsampleBuffer(input, inputSampleRate, outputSampleRate);
+    const pcm = new Int16Array(samples.length);
+
+    for (let index = 0; index < samples.length; index += 1) {
+        const sample = Math.max(-1, Math.min(1, samples[index]));
+        pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    }
+
+    return arrayBufferToBase64(pcm.buffer);
+}
+
+export function ChatExperience({ messages }: Props) {
+    const [chatMessages, setChatMessages] = useState<ChatMessage[]>(messages);
+    const [experienceMode, setExperienceMode] = useState<ExperienceMode>('chat');
+    const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
+    const [draft, setDraft] = useState('');
     const [submitting, setSubmitting] = useState(false);
-    const [currentMode, setCurrentMode] = useState<InterviewMode>('TRAINING');
+    const [loadingMessages, setLoadingMessages] = useState(messages.length === 0);
+    const [syncingMessages, setSyncingMessages] = useState(false);
+    const [restartingSession, setRestartingSession] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [completedSessionMode, setCompletedSessionMode] = useState<InterviewMode | null>(null);
+    const [liveMessagesBySession, setLiveMessagesBySession] = useState<Partial<Record<LiveSessionKey, ChatMessage[]>>>({});
+    const [liveConnecting, setLiveConnecting] = useState(false);
+    const [liveConnected, setLiveConnected] = useState(false);
+    const [liveRecording, setLiveRecording] = useState(false);
+    const [liveSpeaking, setLiveSpeaking] = useState(false);
+    const [liveError, setLiveError] = useState<string | null>(null);
+    const [chatSessionState, setChatSessionState] = useState<InterviewSessionState | null>(null);
+    const [liveSessionState, setLiveSessionState] = useState<InterviewSessionState | null>(null);
+
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const liveMessagesEndRef = useRef<HTMLDivElement>(null);
+    const wsRef = useRef<WebSocket | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const audioStreamRef = useRef<MediaStream | null>(null);
+    const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
+    const liveRecordingRef = useRef(false);
+    const liveAssistantIdRef = useRef<number | null>(null);
+    const liveAudioPlayingRef = useRef(0);
 
-    const form = useForm({
-        content: '',
-        agent_id: 'TRAINING', // Binds dynamically with user selections
-    });
+    const mode = DEFAULT_MODE;
+    const visaType = DEFAULT_VISA_TYPE;
+    const activeSessionMessages = useMemo(
+        () => chatMessages.filter((message) => message.mode === mode && (message.visa_type ?? 'f1') === visaType),
+        [chatMessages, mode, visaType],
+    );
+    const liveSessionKey = `${mode}:${visaType}` as LiveSessionKey;
+    const activeLiveMessages = liveMessagesBySession[liveSessionKey] ?? emptyLiveMessages;
+    const activeSessionState = experienceMode === 'live' ? liveSessionState : chatSessionState;
+    const activeSidebarMessages = experienceMode === 'live' ? activeLiveMessages : activeSessionMessages;
+    const activeSidebarUserCount = activeSidebarMessages.filter((message) => message.role === 'user').length;
+    const activeSidebarAssistant = activeSidebarMessages.filter((message) => message.role === 'assistant' && message.status !== 'pending').at(-1);
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
+    const loadMessages = useCallback(async (silent = false) => {
+        if (silent) {
+            setSyncingMessages(true);
+        } else {
+            setLoadingMessages(true);
+        }
+
+        try {
+            const response = await fetch('/api/ai/messages', {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error('Could not load chat messages from the backend API.');
+            }
+
+            const payload = (await response.json()) as ServerMessage[] | MessagesResponse;
+            const nextMessages = Array.isArray(payload) ? payload : payload.messages;
+
+            setChatMessages(nextMessages);
+            setChatSessionState(Array.isArray(payload) ? null : (payload.session_state ?? null));
+            setCompletedSessionMode(null);
+            setError(null);
+        } catch (requestError) {
+            setError(requestError instanceof Error ? requestError.message : 'Could not connect to the backend API.');
+        } finally {
+            setLoadingMessages(false);
+            setSyncingMessages(false);
+        }
+    }, []);
 
     useEffect(() => {
-        scrollToBottom();
-    }, [messages, submitting]);
+        const timer = window.setTimeout(() => {
+            void loadMessages(messages.length > 0);
+        }, 0);
 
-    // Handle switching states manually or from headers
-    const handleModeChange = (mode: InterviewMode) => {
-        setCurrentMode(mode);
-        form.setData('agent_id', mode);
+        return () => window.clearTimeout(timer);
+    }, [loadMessages, messages.length]);
+
+    useEffect(() => {
+        window.localStorage.setItem('officer-charles-theme', theme);
+        document.documentElement.dataset.ocTheme = theme;
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+    }, [theme]);
+
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, [chatMessages, submitting]);
+
+    useEffect(() => {
+        liveMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, [activeLiveMessages]);
+
+    useEffect(() => {
+        liveRecordingRef.current = liveRecording;
+    }, [liveRecording]);
+
+    useEffect(() => {
+        if (!textareaRef.current) {
+return;
+}
+
+        textareaRef.current.style.height = '0px';
+        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 156)}px`;
+    }, [draft]);
+
+    const submitMessage = async (messageContent: string) => {
+        const content = messageContent.trim();
+
+        if (!content || submitting) {
+return;
+}
+
+        const optimisticId = `optimistic-${Date.now()}`;
+        const createdAt = new Date().toISOString();
+
+        const optimisticMessage: ChatMessage = {
+            id: Date.now() * -1,
+            localId: optimisticId,
+            role: 'user',
+            content,
+            created_at: createdAt,
+            mode,
+            visa_type: visaType,
+            status: 'pending',
+        };
+
+        setError(null);
+        setDraft('');
+        setSubmitting(true);
+        setCompletedSessionMode(null);
+        setChatMessages((currentMessages) => [
+            ...(completedSessionMode === mode
+                ? currentMessages.filter((message) => message.mode !== mode || (message.visa_type ?? 'f1') !== visaType)
+                : currentMessages),
+            optimisticMessage,
+        ]);
+
+        try {
+            const response = await fetch('/api/ai/messages', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ content, mode, visa_type: visaType }),
+            });
+
+            const payload = await response.json().catch(() => null);
+
+            if (!response.ok) {
+                const contentError = payload?.errors?.content?.[0];
+
+                throw new Error(contentError || payload?.message || 'Officer Charles could not process that message. Please try again.');
+            }
+
+            const data = payload as StoreMessageResponse;
+            const shouldClearActiveSession = data.session_completed || data.session_reset || completedSessionMode === mode;
+
+            setChatMessages((currentMessages) => [
+                ...(shouldClearActiveSession
+                    ? currentMessages.filter((message) => message.mode !== mode || (message.visa_type ?? 'f1') !== visaType)
+                    : currentMessages.filter((message) => message.localId !== optimisticId)),
+                data.user,
+                data.assistant,
+            ]);
+            setChatSessionState(data.session_state ?? null);
+            setCompletedSessionMode(data.session_completed ? mode : null);
+        } catch (requestError) {
+            setDraft(content);
+            setError(requestError instanceof Error ? requestError.message : 'Something went wrong. Please try again.');
+            setChatMessages((currentMessages) =>
+                currentMessages.map((message) =>
+                    message.localId === optimisticId ? { ...message, status: 'failed' } : message,
+                ),
+            );
+        } finally {
+            setSubmitting(false);
+            textareaRef.current?.focus();
+        }
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!form.data.content.trim() || submitting) return;
+    const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        void submitMessage(draft);
+    };
 
-        setSubmitting(true);
-        form.post('/api/ai/messages', {
-            preserveScroll: true,
-            onSuccess: () => {
-                form.reset('content');
-                setSubmitting(false);
-            },
-            onError: () => {
-                setSubmitting(false);
+    const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            void submitMessage(draft);
+        }
+    };
+
+    const restartInterview = async () => {
+        if (submitting || restartingSession) {
+            return;
+        }
+
+        setRestartingSession(true);
+        setError(null);
+
+        try {
+            const response = await fetch('/api/ai/restart', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ mode, visa_type: visaType }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Could not restart this interview session. Please try again.');
+            }
+
+            setChatMessages((currentMessages) => currentMessages.filter((message) => message.mode !== mode || (message.visa_type ?? 'f1') !== visaType));
+            setChatSessionState(defaultChatSessionState);
+            setCompletedSessionMode(null);
+            setDraft('');
+        } catch (requestError) {
+            setError(requestError instanceof Error ? requestError.message : 'Could not restart this interview session.');
+        } finally {
+            setRestartingSession(false);
+            textareaRef.current?.focus();
+        }
+    };
+
+    const restartLiveInterview = () => {
+        if (liveConnecting) {
+            return;
+        }
+
+        stopLiveInterview();
+        setLiveError(null);
+        setLiveSessionState(defaultLiveSessionState);
+        setLiveMessagesBySession((currentSessions) => ({
+            ...currentSessions,
+            [liveSessionKey]: [],
+        }));
+    };
+
+    const restartActiveInterview = async () => {
+        if (experienceMode === 'live') {
+            restartLiveInterview();
+
+            return;
+        }
+
+        await restartInterview();
+    };
+
+    const appendLiveAssistantDelta = useCallback((delta: string) => {
+        if (!delta) {
+return;
+}
+
+        setLiveMessagesBySession((currentSessions) => {
+            const currentMessages = currentSessions[liveSessionKey] ?? [];
+            const activeAssistantId = liveAssistantIdRef.current;
+
+            if (activeAssistantId) {
+                return {
+                    ...currentSessions,
+                    [liveSessionKey]: currentMessages.map((message) =>
+                        message.id === activeAssistantId ? { ...message, content: `${message.content}${delta}` } : message,
+                    ),
+                };
+            }
+
+            const id = Date.now() * -1;
+            liveAssistantIdRef.current = id;
+
+            return {
+                ...currentSessions,
+                [liveSessionKey]: [
+                    ...currentMessages,
+                    {
+                        id,
+                        role: 'assistant',
+                        content: delta,
+                        created_at: new Date().toISOString(),
+                        mode,
+                        visa_type: visaType,
+                    },
+                ],
+            };
+        });
+    }, [liveSessionKey, mode, visaType]);
+
+    const finalizeLiveAssistant = useCallback(() => {
+        liveAssistantIdRef.current = null;
+    }, []);
+
+    const addLiveUserMessage = useCallback((content: string) => {
+        if (!content.trim()) {
+return;
+}
+
+        setLiveMessagesBySession((currentSessions) => ({
+            ...currentSessions,
+            [liveSessionKey]: [
+                ...(currentSessions[liveSessionKey] ?? []),
+                {
+                    id: Date.now() * -1,
+                    role: 'user',
+                    content,
+                    created_at: new Date().toISOString(),
+                    mode,
+                    visa_type: visaType,
+                },
+            ],
+        }));
+    }, [liveSessionKey, mode, visaType]);
+
+    const playDirectAudio = useCallback((audioBase64: string, mimeType = 'audio/mpeg') => {
+        if (!audioBase64) {
+return;
+}
+
+        const bytes = base64ToUint8Array(audioBase64);
+        const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+        const audio = new Audio(url);
+
+        liveAudioPlayingRef.current += 1;
+        setLiveSpeaking(true);
+
+        const finish = () => {
+            URL.revokeObjectURL(url);
+            liveAudioPlayingRef.current = Math.max(0, liveAudioPlayingRef.current - 1);
+
+            if (liveAudioPlayingRef.current === 0) {
+                setLiveSpeaking(false);
+            }
+        };
+
+        audio.onended = finish;
+        audio.onerror = finish;
+        void audio.play().catch(finish);
+    }, []);
+
+    const stopLiveInterview = useCallback(() => {
+        wsRef.current?.close();
+        wsRef.current = null;
+
+        audioProcessorRef.current?.disconnect();
+        audioSourceRef.current?.disconnect();
+        audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+
+        audioProcessorRef.current = null;
+        audioSourceRef.current = null;
+        audioStreamRef.current = null;
+        setLiveConnected(false);
+        setLiveConnecting(false);
+        setLiveRecording(false);
+        setLiveSpeaking(false);
+        liveRecordingRef.current = false;
+        liveAudioPlayingRef.current = 0;
+        liveAssistantIdRef.current = null;
+    }, []);
+
+    const handleLiveMessage = useCallback((event: MessageEvent<string>) => {
+        const data = event.data;
+
+        try {
+            const payload = JSON.parse(data);
+
+            if (payload.type === 'ready') {
+                setLiveConnected(true);
+                setLiveConnecting(false);
+                setLiveError(null);
+
+                return;
+            }
+
+            if (payload.type === 'session.state') {
+                setLiveSessionState(payload.state ?? null);
+
+                return;
+            }
+
+            if (payload.type === 'transcription') {
+                addLiveUserMessage(payload.message ?? '');
+
+                return;
+            }
+
+            if (payload.type === 'direct.reply') {
+                const message = payload.message ?? '';
+                appendLiveAssistantDelta(message);
+                finalizeLiveAssistant();
+
+                return;
+            }
+
+            if (payload.type === 'direct.audio') {
+                playDirectAudio(payload.audio ?? '', payload.mime_type ?? 'audio/mpeg');
+
+                return;
+            }
+
+            if (payload.type === 'error') {
+                setLiveError(payload.message ?? 'Live interview error.');
+
+                return;
+            }
+        } catch {
+            return;
+        }
+    }, [addLiveUserMessage, appendLiveAssistantDelta, finalizeLiveAssistant, playDirectAudio]);
+
+    const startAudioCapture = useCallback(async (socket: WebSocket) => {
+        const audioContext = new AudioContext({ sampleRate: 24000 });
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
             },
         });
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+        processor.onaudioprocess = (event) => {
+            const output = event.outputBuffer.getChannelData(0);
+            output.fill(0);
+
+            if (!liveRecordingRef.current || socket.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
+            const input = event.inputBuffer.getChannelData(0);
+            socket.send(JSON.stringify({ _bin: floatToPcm16Base64(input, audioContext.sampleRate, 24000) }));
+        };
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        audioContextRef.current = audioContext;
+        audioStreamRef.current = stream;
+        audioSourceRef.current = source;
+        audioProcessorRef.current = processor;
+    }, []);
+
+    const startLiveInterview = async () => {
+        if (liveConnecting || liveConnected) {
+return;
+}
+
+        setExperienceMode('live');
+        setLiveConnecting(true);
+        setLiveError(null);
+        setLiveMessagesBySession((currentSessions) => ({
+            ...currentSessions,
+            [liveSessionKey]: [],
+        }));
+        liveAssistantIdRef.current = null;
+
+        try {
+            const response = await fetch('/api/ai/live-session', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ mode, visa_type: visaType }),
+            });
+
+            const payload = await response.json().catch(() => null);
+
+            if (!response.ok) {
+                throw new Error(payload?.message ?? 'Could not start live interview.');
+            }
+
+            const socket = new WebSocket(payload.ws_url);
+            setLiveSessionState(payload.session_state ?? defaultLiveSessionState);
+            wsRef.current = socket;
+            socket.onmessage = handleLiveMessage;
+            socket.onerror = () => setLiveError('Live interview websocket error.');
+            socket.onclose = () => {
+                setLiveConnected(false);
+                setLiveRecording(false);
+                liveRecordingRef.current = false;
+            };
+
+            await startAudioCapture(socket);
+        } catch (requestError) {
+            setLiveError(requestError instanceof Error ? requestError.message : 'Could not start live interview.');
+            stopLiveInterview();
+        } finally {
+            setLiveConnecting(false);
+        }
     };
+
+    const toggleLiveRecording = () => {
+        if (!liveConnected || !wsRef.current) {
+return;
+}
+
+        if (liveRecording) {
+            setLiveRecording(false);
+            liveRecordingRef.current = false;
+            wsRef.current.send(JSON.stringify({ type: 'command', command: 'commit' }));
+
+            return;
+        }
+
+        setLiveRecording(true);
+        liveRecordingRef.current = true;
+    };
+
+    const selectExperienceMode = (nextExperienceMode: ExperienceMode) => {
+        if (nextExperienceMode === experienceMode) {
+            return;
+        }
+
+        if (experienceMode === 'live') {
+            stopLiveInterview();
+            setLiveError(null);
+        }
+
+        setExperienceMode(nextExperienceMode);
+    };
+
+    useEffect(() => () => stopLiveInterview(), [stopLiveInterview]);
+
+    return (
+        <main data-oc-theme={theme} className="oc-page h-dvh overflow-hidden font-sans">
+            <div className="oc-shell flex h-full min-h-0 flex-col">
+                <InterviewHeader
+                    experienceMode={experienceMode}
+                    loading={loadingMessages || syncingMessages}
+                    onRestart={() => void restartActiveInterview()}
+                    onSelectMode={selectExperienceMode}
+                    onToggleTheme={() => setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))}
+                    restarting={restartingSession || liveConnecting}
+                    theme={theme}
+                />
+
+                <div className={cn('oc-experience-main', experienceMode === 'live' ? 'is-live' : 'is-chat')}>
+                    {experienceMode === 'live' ? (
+                        <div className="oc-live-layout">
+                            <LiveInterviewStage
+                                connected={liveConnected}
+                                connecting={liveConnecting}
+                                error={liveError}
+                                recording={liveRecording}
+                                speaking={liveSpeaking}
+                            />
+
+                            <section className="oc-live-side">
+                                <SessionProgressPanel
+                                    latestAssistant={activeSidebarAssistant}
+                                    experience={experienceContent.live}
+                                    sessionState={activeSessionState}
+                                    userCount={activeSidebarUserCount}
+                                />
+                                <section className="oc-chat-panel oc-live-transcript-panel">
+                                    <ChatTranscript
+                                        empty={<LiveTranscriptEmpty connected={liveConnected} />}
+                                        endRef={liveMessagesEndRef}
+                                        messages={activeLiveMessages}
+                                    />
+                                </section>
+                                <LiveMicControls
+                                    connected={liveConnected}
+                                    connecting={liveConnecting}
+                                    onEnd={stopLiveInterview}
+                                    onStart={startLiveInterview}
+                                    onToggleRecording={toggleLiveRecording}
+                                    recording={liveRecording}
+                                />
+                            </section>
+                        </div>
+                    ) : (
+                        <div className="oc-chat-layout">
+                            <section className="oc-assistant-portrait-panel">
+                                <AssistantPortrait talking={submitting} />
+                                <MobileSummary
+                                    experience={experienceContent.chat}
+                                    sessionState={activeSessionState}
+                                    userCount={activeSidebarUserCount}
+                                />
+                            </section>
+
+                            <section className="oc-chat-panel oc-chat-primary-panel">
+                                <ChatTranscript
+                                    empty={loadingMessages ? <LoadingState /> : <EmptyState onSelectPrompt={setDraft} />}
+                                    endRef={messagesEndRef}
+                                    messages={loadingMessages ? [] : activeSessionMessages}
+                                    thinking={submitting}
+                                />
+                                <ChatComposer
+                                    draft={draft}
+                                    error={error}
+                                    onChange={setDraft}
+                                    onKeyDown={handleKeyDown}
+                                    onSubmit={handleSubmit}
+                                    submitting={submitting}
+                                    textareaRef={textareaRef}
+                                />
+                            </section>
+
+                            <aside className="oc-sidebar-shell">
+                                <div className="oc-sidebar-stack">
+                                    <SidebarCards
+                                        latestAssistant={activeSidebarAssistant}
+                                        onRestart={() => void restartActiveInterview()}
+                                        restartingSession={restartingSession}
+                                        experience={experienceContent.chat}
+                                        sessionState={activeSessionState}
+                                        userCount={activeSidebarUserCount}
+                                    />
+                                </div>
+                            </aside>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </main>
+    );
+}
+
+export default function VisaAi({ messages }: Props) {
+    return (
+        <>
+            <Head title="Officer Charles - Visa Interview Prep" />
+            <ChatExperience messages={messages} />
+        </>
+    );
+}
+
+function InterviewHeader({
+    experienceMode,
+    loading,
+    onRestart,
+    onSelectMode,
+    onToggleTheme,
+    restarting,
+    theme,
+}: {
+    experienceMode: ExperienceMode;
+    loading: boolean;
+    onRestart: () => void;
+    onSelectMode: (mode: ExperienceMode) => void;
+    onToggleTheme: () => void;
+    restarting: boolean;
+    theme: ThemeMode;
+}) {
+    return (
+        <header className="oc-header sticky top-0 z-30">
+            <div className="oc-header-inner">
+                <div className="oc-brand-row">
+                    <div className="oc-brand-mark">
+                        <GraduationCap className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                        <h1 className="oc-heading">Officer Charles</h1>
+                        <p className="oc-subtle">Visa interview practice workspace</p>
+                    </div>
+                </div>
+
+                <div className="oc-header-actions">
+                    <ModeToggle experienceMode={experienceMode} onSelectMode={onSelectMode} />
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={onRestart}
+                        disabled={loading || restarting}
+                        className="oc-restart-button oc-header-restart"
+                    >
+                        <RotateCcw className={cn('h-4 w-4', restarting && 'animate-spin')} />
+                        <span>Restart</span>
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={onToggleTheme}
+                        className="oc-icon-button"
+                        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+                    >
+                        {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                    </Button>
+                </div>
+            </div>
+        </header>
+    );
+}
+
+function ModeToggle({
+    experienceMode,
+    onSelectMode,
+}: {
+    experienceMode: ExperienceMode;
+    onSelectMode: (mode: ExperienceMode) => void;
+}) {
+    return (
+        <div className="oc-mode-control">
+            {(['chat', 'live'] as ExperienceMode[]).map((option) => (
+                <button
+                    key={option}
+                    type="button"
+                    onClick={() => onSelectMode(option)}
+                    className={cn('oc-mode-button', experienceMode === option && 'is-active')}
+                >
+                    {option === 'chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
+                    <span>{experienceContent[option].label}</span>
+                </button>
+            ))}
+        </div>
+    );
+}
+
+function AssistantPortrait({ talking }: { talking: boolean }) {
+    return (
+        <section className={cn('oc-assistant-portrait', talking && 'is-talking')}>
+            <div className="oc-assistant-portrait-media">
+                <img
+                    src={talking ? '/assets/images/assistant.gif' : '/assets/images/assistant.png'}
+                    alt="Officer Charles assistant"
+                    className="oc-assistant-portrait-image"
+                    draggable="false"
+                />
+            </div>
+            <div className="oc-assistant-portrait-status">
+                <span className={cn('oc-speaking-dot', talking && 'is-active')} />
+                <span>{talking ? 'Officer Charles is responding' : 'Officer Charles is ready'}</span>
+            </div>
+        </section>
+    );
+}
+
+function SessionProgressPanel({
+    latestAssistant,
+    experience,
+    sessionState,
+    userCount,
+}: {
+    experience: (typeof experienceContent)[ExperienceMode];
+    latestAssistant?: ChatMessage;
+    sessionState: InterviewSessionState | null;
+    userCount: number;
+}) {
+    const answeredCount = sessionState?.answered_questions.length ?? 0;
+    const totalQuestions = sessionState?.total_questions ?? 0;
+    const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : 0;
+
+    return (
+        <section className="oc-session-summary-panel">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <p className="oc-kicker">Officer</p>
+                    <h2 className="oc-card-title">Officer Charles</h2>
+                </div>
+                <Badge className="oc-mode-badge" variant="outline">
+                    {experience.label}
+                </Badge>
+            </div>
+
+            <div className="oc-progress-block">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                    <span className="oc-subtle text-xs">{totalQuestions > 0 ? `${answeredCount} of ${totalQuestions} answered` : 'Progress starts after setup'}</span>
+                    <span className="oc-progress-value">{progress}%</span>
+                </div>
+                <div className="oc-progress-track">
+                    <div className="oc-progress-bar" style={{ width: `${progress}%` }} />
+                </div>
+            </div>
+
+            <div className="oc-session-stats grid grid-cols-2 gap-2">
+                <div>
+                    <span>{formatSelectedMode(sessionState?.selected_mode)}</span>
+                    <p>Practice mode</p>
+                </div>
+                <div>
+                    <span>{formatVisaType(sessionState?.selected_visa_type)}</span>
+                    <p>Visa type</p>
+                </div>
+            </div>
+
+            <div className="oc-latest-response">
+                <p className="oc-kicker">Status</p>
+                <p>{formatPhase(sessionState?.phase)}</p>
+            </div>
+            <div className="oc-latest-response">
+                <p className="oc-kicker">Latest response</p>
+                <p>{textPreview(latestAssistant?.content)}</p>
+            </div>
+            <p className="oc-subtle text-xs">{userCount} user answers in this session</p>
+        </section>
+    );
+}
+
+function ChatTranscript({
+    empty,
+    endRef,
+    messages,
+    thinking = false,
+}: {
+    empty: ReactNode;
+    endRef: RefObject<HTMLDivElement | null>;
+    messages: ChatMessage[];
+    thinking?: boolean;
+}) {
+    return (
+        <div className="oc-chat-scroll">
+            <div className="oc-transcript-inner">
+                {messages.length === 0 ? empty : messages.map((message) => <MessageBubble key={message.localId ?? message.id} message={message} />)}
+                {thinking && <ThinkingBubble />}
+                <div ref={endRef} />
+            </div>
+        </div>
+    );
+}
+
+function ChatComposer({
+    draft,
+    error,
+    onChange,
+    onKeyDown,
+    onSubmit,
+    submitting,
+    textareaRef,
+}: {
+    draft: string;
+    error: string | null;
+    onChange: (draft: string) => void;
+    onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+    onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+    submitting: boolean;
+    textareaRef: RefObject<HTMLTextAreaElement | null>;
+}) {
+    return (
+        <footer className="oc-composer-wrap">
+            {error && (
+                <div className="oc-error-banner">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{error}</span>
+                </div>
+            )}
+
+            <form onSubmit={onSubmit} className="oc-composer">
+                <textarea
+                    ref={textareaRef}
+                    value={draft}
+                    onChange={(event) => onChange(event.target.value)}
+                    onKeyDown={onKeyDown}
+                    placeholder="Reply to Officer Charles..."
+                    rows={1}
+                    disabled={submitting}
+                    className="oc-textarea"
+                />
+                <Button
+                    type="submit"
+                    size="icon"
+                    disabled={submitting || !draft.trim()}
+                    className="oc-send-button"
+                    aria-label="Send message"
+                >
+                    {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+                </Button>
+            </form>
+        </footer>
+    );
+}
+
+function LiveTranscriptEmpty({ connected }: { connected: boolean }) {
+    return (
+        <div className="oc-live-empty">
+            <MessageSquareText className="h-6 w-6" />
+            <h3>{connected ? 'Transcript will appear here' : 'Start the live interview'}</h3>
+            <p>{connected ? 'Your spoken answers and Officer Charles responses will stream into this panel.' : 'Connect first, then use the mic control to answer questions.'}</p>
+        </div>
+    );
+}
+
+function SidebarCards({
+    latestAssistant,
+    onRestart,
+    restartingSession,
+    experience,
+    sessionState,
+    userCount,
+}: {
+    experience: (typeof experienceContent)[ExperienceMode];
+    latestAssistant?: ChatMessage;
+    onRestart: () => void;
+    restartingSession: boolean;
+    sessionState: InterviewSessionState | null;
+    userCount: number;
+}) {
+    const answeredCount = sessionState?.answered_questions.length ?? 0;
+    const totalQuestions = sessionState?.total_questions ?? 0;
+    const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : null;
+    const checklistItems = [
+        ...(sessionState?.answered_questions ?? []).map((question) => ({
+            key: `answered-${question}`,
+            label: question,
+            status: 'Answered',
+            active: false,
+        })),
+        ...(sessionState?.current_question
+            ? [{
+                key: `current-${sessionState.current_question}`,
+                label: sessionState.current_question,
+                status: 'Current question',
+                active: true,
+            }]
+            : []),
+    ].slice(-5);
 
     return (
         <>
-            <Head title={`Visa Interview Prep - Officer Charles`} />
-            <div className="flex h-screen flex-col bg-background text-foreground">
-                
-                {/* Global Application Header */}
-                <header className="flex h-16 items-center justify-between border-b bg-card px-4 sm:px-6 lg:px-8 shrink-0 shadow-sm z-10">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md">
-                            <GraduationCap className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <h1 className="text-sm font-bold tracking-tight">Officer Charles</h1>
-                            <p className="text-[11px] text-muted-foreground">U.S. Visa Simulator</p>
-                        </div>
+            <section className="oc-sidebar-card oc-session-card oc-scroll-card">
+                <div className="flex items-start justify-between gap-3">
+                    <div>
+                        <p className="oc-kicker">Actual Session</p>
+                        <h2 className="oc-card-title">{experience.label}</h2>
                     </div>
-                    
-                    {/* Interactive Session Mode Controller */}
-                    <div className="flex items-center gap-1.5 rounded-xl border bg-background p-1 shadow-inner">
-                        <button
-                            type="button"
-                            onClick={() => handleModeChange('TRAINING')}
-                            className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
-                                currentMode === 'TRAINING'
-                                    ? 'bg-primary text-primary-foreground shadow'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                        >
-                            <Sparkles className="h-3.5 w-3.5" />
-                            Training Session
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => handleModeChange('SIMULATION')}
-                            className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
-                                currentMode === 'SIMULATION'
-                                    ? 'bg-destructive text-destructive-foreground shadow'
-                                    : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                        >
-                            <Flame className="h-3.5 w-3.5" />
-                            Real Simulation
-                        </button>
-                    </div>
-                </header>
-
-                {/* Chat History Container */}
-                <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 bg-slate-50/40 dark:bg-zinc-950/20">
-                    <div className="mx-auto max-w-2xl space-y-6">
-                        
-                        {/* Empty States customized based on Session Mode selection */}
-                        {messages.length === 0 && (
-                            <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in duration-300">
-                                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary mb-4 shadow-sm">
-                                    <ShieldCheck className="h-7 w-7" />
-                                </div>
-                                <h2 className="text-xl font-bold tracking-tight">Interview Initialized</h2>
-                                <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                                    {currentMode === 'TRAINING' 
-                                        ? "Officer Charles will review your structure and supply live feedback loops, scoring metrics, and missed optimization points."
-                                        : "Strict consular setup. 10-15 direct questions with zero real-time hints. Complete final performance analysis provided upon completion."
-                                    }
-                                </p>
-                            </div>
-                        )}
-
-                        {/* Chat Threads UI */}
-                        {messages.map((message) => {
-                            const isUser = message.role === 'user';
-                            
-                            // Check if the current bubble contains report keywords to format structured dashboard layouts
-                            const isFinalReport = message.content.includes("FINAL REPORT") || message.content.includes("Performance Report");
-
-                            return (
-                                <div
-                                    key={message.id}
-                                    className={`flex items-start gap-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
-                                >
-                                    <Avatar className="h-9 w-9 shrink-0 select-none border shadow-sm">
-                                        {isUser ? (
-                                            <AvatarFallback className="bg-secondary text-secondary-foreground font-semibold">
-                                                <User className="h-4 w-4" />
-                                            </AvatarFallback>
-                                        ) : (
-                                            <AvatarFallback className="bg-zinc-900 text-white font-medium text-xs dark:bg-zinc-100 dark:text-zinc-900">
-                                                OC
-                                            </AvatarFallback>
-                                        )}
-                                    </Avatar>
-
-                                    <div className={`flex flex-col max-w-[85%] space-y-1.5 ${isUser ? 'items-end' : 'items-start'}`}>
-                                        
-                                        {/* Render specialized UI block if message acts as the final report summary */}
-                                        {isFinalReport ? (
-                                            <div className="w-full rounded-2xl border bg-card p-5 shadow-md space-y-4 animate-in zoom-in-95 duration-200">
-                                                <div className="flex items-center justify-between border-b pb-3">
-                                                    <h3 className="font-bold text-base text-primary">📊 Visa Interview Performance Report</h3>
-                                                    <span className="text-xs bg-muted px-2.5 py-1 rounded-full font-mono font-semibold">Consular Evaluation</span>
-                                                </div>
-                                                <div className="whitespace-pre-wrap text-sm text-foreground/90 leading-relaxed font-sans">
-                                                    {message.content}
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            /* Regular Message Bubble */
-                                            <div
-                                                className={`rounded-2xl px-4 py-3 text-sm shadow-sm leading-relaxed whitespace-pre-wrap ${
-                                                    isUser
-                                                        ? 'bg-primary text-primary-foreground rounded-tr-none font-medium'
-                                                        : 'bg-card border text-foreground rounded-tl-none shadow-sm'
-                                                }`}
-                                            >
-                                                {message.content}
-                                            </div>
-                                        )}
-
-                                        <span className="text-[10px] text-muted-foreground px-1">
-                                            {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                        </span>
-                                    </div>
-                                </div>
-                            );
-                        })}
-
-                        {/* Processing / Bot Thinking Bubble */}
-                        {submitting && (
-                            <div className="flex items-start gap-4 flex-row animate-pulse">
-                                <Avatar className="h-9 w-9 shrink-0 border bg-card">
-                                    <AvatarFallback className="bg-zinc-900 text-white text-xs dark:bg-zinc-100 dark:text-zinc-900">OC</AvatarFallback>
-                                </Avatar>
-                                <div className="rounded-2xl rounded-tl-none bg-card border px-4 py-3 text-sm shadow-sm flex items-center gap-2 text-muted-foreground">
-                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                    <span className="font-medium text-xs">Charles is processing your response...</span>
-                                </div>
-                            </div>
-                        )}
-                        
-                        <div ref={messagesEndRef} />
+                    <div className="oc-card-icon">
+                        {experience.shortLabel === 'Chat' ? <Keyboard className="h-5 w-5" /> : <Radio className="h-5 w-5" />}
                     </div>
                 </div>
-
-                {/* Bottom Input Workspace Context Elements */}
-                <div className="border-t bg-card p-4 sm:p-5 shadow-2xl z-10">
-                    <div className="mx-auto max-w-2xl">
-                        
-                        {/* Dynamic Mode Helper Context Bar above input widget */}
-                        <div className="mb-3 flex items-center justify-between px-1">
-                            {currentMode === 'TRAINING' ? (
-                                <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 font-medium bg-amber-500/5 px-2.5 py-1 rounded-lg">
-                                    <HelpCircle className="h-3.5 w-3.5" />
-                                    <span>Tip: Highlight your specific program, university, and clear home ties.</span>
-                                </div>
-                            ) : (
-                                <div className="flex items-center gap-1.5 text-xs text-destructive font-semibold bg-destructive/5 px-2.5 py-1 rounded-lg">
-                                    <AlertTriangle className="h-3.5 w-3.5 animate-pulse" />
-                                    <span>Simulated Mode: Continuous questioning path active. Avoid short fragments.</span>
-                                </div>
-                            )}
-                        </div>
-
-                        <form onSubmit={handleSubmit} className="relative flex items-center rounded-2xl border bg-background shadow-inner focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all duration-200">
-                            <textarea
-                                value={form.data.content}
-                                onChange={(e) => form.setData('content', e.target.value)}
-                                placeholder={currentMode === 'TRAINING' ? "Provide your structured response..." : "Respond directly to the officer..."}
-                                rows={1}
-                                className="w-full resize-none bg-transparent py-4 pl-4 pr-14 text-sm outline-none placeholder:text-muted-foreground min-h-[54px] max-h-32"
-                                disabled={submitting}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && !e.shiftKey) {
-                                        e.preventDefault();
-                                        handleSubmit(e);
-                                    }
-                                }}
-                            />
-                            <div className="absolute right-3 bottom-2.5">
-                                <Button 
-                                    type="submit" 
-                                    size="icon" 
-                                    className={`h-8 w-8 rounded-xl transition-all active:scale-95 ${currentMode === 'SIMULATION' ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}`} 
-                                    disabled={submitting || !form.data.content.trim()}
-                                >
-                                    {submitting ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                        <ArrowUp className="h-4 w-4" />
-                                    )}
-                                </Button>
-                            </div>
-                        </form>
-                        
-                        {form.errors.content && (
-                            <p className="mt-2 text-xs text-destructive font-medium animate-in fade-in-50">{form.errors.content}</p>
-                        )}
-                        
-                        <p className="mt-3 text-center text-[10px] text-muted-foreground tracking-wide uppercase">
-                            Formal F-1/M-1 visa simulation environment module.
-                        </p>
+                <p className="oc-card-copy">This card shows only confirmed state from the assistant session.</p>
+                <div className="oc-session-stats mt-4 grid grid-cols-2 gap-2">
+                    <div>
+                        <span>{formatSelectedMode(sessionState?.selected_mode)}</span>
+                        <p>Practice mode</p>
+                    </div>
+                    <div>
+                        <span>{formatVisaType(sessionState?.selected_visa_type)}</span>
+                        <p>Visa type</p>
                     </div>
                 </div>
+                <div className="oc-latest-response mt-3">
+                    <p className="oc-kicker">Status</p>
+                    <p>{formatPhase(sessionState?.phase)}</p>
+                </div>
+                <div className="oc-latest-response mt-3">
+                    <p className="oc-kicker">Latest Officer Response</p>
+                    <p>{textPreview(latestAssistant?.content)}</p>
+                </div>
+                <div className="mt-4 flex items-center justify-between gap-3">
+                    <Badge className="oc-mode-badge" variant="outline">
+                        {experience.shortLabel}
+                    </Badge>
+                    <span className="oc-subtle text-xs">{userCount} user answers</span>
+                </div>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={onRestart}
+                    disabled={restartingSession}
+                    className="oc-restart-button mt-4 w-full"
+                >
+                    <RotateCcw className={cn('h-4 w-4', restartingSession && 'animate-spin')} />
+                    Restart interview
+                </Button>
+            </section>
 
-            </div>
+            <section className="oc-sidebar-card oc-scroll-card">
+                <div className="mb-4 flex items-center gap-3">
+                    <div className="oc-card-icon">
+                        <MessageSquareText className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <p className="oc-kicker">Real Progress</p>
+                        <h3 className="oc-card-title">{progress === null ? 'Not started yet' : `${progress}% complete`}</h3>
+                    </div>
+                </div>
+                {progress === null ? (
+                    <p className="oc-card-copy mt-3">Progress begins after Officer Charles starts the interview questions.</p>
+                ) : (
+                    <>
+                        <div className="mb-3 mt-4 flex items-center justify-between gap-3">
+                            <span className="oc-subtle text-xs">{answeredCount} of {totalQuestions} answered</span>
+                            <span className="oc-progress-value">{progress}%</span>
+                        </div>
+                        <div className="oc-progress-track">
+                            <div className="oc-progress-bar" style={{ width: `${progress}%` }} />
+                        </div>
+                    </>
+                )}
+            </section>
+
+            <section className="oc-sidebar-card oc-readiness-card oc-scroll-card">
+                <div className="mb-4 flex items-center gap-3">
+                    <div className="oc-card-icon">
+                        <BadgeCheck className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <p className="oc-kicker">Answers Checklist</p>
+                        <h3 className="oc-card-title">Real answered questions</h3>
+                    </div>
+                </div>
+                {checklistItems.length > 0 ? (
+                    <div className="oc-readiness-list flex flex-col gap-2">
+                        {checklistItems.map((item) => (
+                            <div key={item.key} className={cn('oc-check-item', item.active && 'is-active')}>
+                                <BadgeCheck className={cn('mt-0.5 h-4 w-4 shrink-0', item.active ? 'text-[var(--oc-accent)]' : 'text-emerald-400')} />
+                                <div>
+                                    <p className="font-semibold text-[var(--oc-text)]">{item.status}</p>
+                                    <p>{item.label}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <p className="oc-card-copy">No interview answers yet. This checklist appears only after the assistant has real question state.</p>
+                )}
+            </section>
         </>
+    );
+}
+
+function MobileSummary({
+    experience,
+    sessionState,
+    userCount,
+}: {
+    experience: (typeof experienceContent)[ExperienceMode];
+    sessionState: InterviewSessionState | null;
+    userCount: number;
+}) {
+    const answeredCount = sessionState?.answered_questions.length ?? 0;
+    const totalQuestions = sessionState?.total_questions ?? 0;
+    const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : null;
+
+    return (
+        <section className="oc-mobile-summary">
+            <div className="oc-card-icon">
+                {experience.shortLabel === 'Chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
+            </div>
+            <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                        <p className="oc-kicker">Current experience</p>
+                        <h2 className="oc-card-title truncate">{experience.label}</h2>
+                    </div>
+                </div>
+                <p className="oc-card-copy mt-2">
+                    {progress === null
+                        ? `${formatPhase(sessionState?.phase)}. ${userCount} user answers.`
+                        : `${progress}% complete. ${answeredCount} of ${totalQuestions} answered.`}
+                </p>
+            </div>
+        </section>
+    );
+}
+
+function LoadingState() {
+    return (
+        <div className="flex min-h-[54vh] flex-col items-center justify-center text-center">
+            <div className="oc-loading-mark">
+                <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
+            <h2 className="oc-empty-title">Loading conversation</h2>
+            <p className="oc-empty-copy">Connecting the React chat frontend to the Laravel backend API.</p>
+        </div>
+    );
+}
+
+function EmptyState({ onSelectPrompt }: { onSelectPrompt: (prompt: string) => void }) {
+    return (
+        <div className="flex min-h-[54vh] flex-col items-center justify-center text-center">
+            <div className="oc-empty-mark">
+                <BadgeCheck className="h-7 w-7" />
+            </div>
+            <Badge className="oc-mode-badge mb-4" variant="outline">
+                Assistant-led setup
+            </Badge>
+            <h2 className="oc-empty-title">Interview ready</h2>
+            <p className="oc-empty-copy">
+                Start in chat, then Officer Charles will guide the setup inside the conversation.
+            </p>
+            <div className="mt-8 grid w-full max-w-3xl gap-3 sm:grid-cols-3">
+                {starterPrompts.map((prompt, index) => (
+                    <button key={prompt} type="button" onClick={() => onSelectPrompt(prompt)} className="oc-starter-card">
+                        <span className="oc-starter-index">{index + 1}</span>
+                        <span>{prompt}</span>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function LiveInterviewStage({
+    connected,
+    connecting,
+    error,
+    recording,
+    speaking,
+}: {
+    connected: boolean;
+    connecting: boolean;
+    error: string | null;
+    recording: boolean;
+    speaking: boolean;
+}) {
+    const avatarSrc = speaking ? '/assets/images/assistant.gif' : '/assets/images/assistant.png';
+
+    return (
+        <section className="oc-live-stage">
+            <div className="oc-live-main">
+                <div className={cn('oc-live-avatar-wrap', connected && 'is-connected', recording && 'is-recording', speaking && 'is-speaking')}>
+                    <img src={avatarSrc} alt="Officer Charles avatar" className="oc-live-avatar" draggable="false" />
+                    {connecting && (
+                        <div className="oc-live-avatar-loader">
+                            <Loader2 className="h-9 w-9 animate-spin" />
+                        </div>
+                    )}
+                </div>
+
+                <div className="oc-live-copy">
+                    <Badge className="oc-mode-badge mb-3" variant="outline">
+                        Assistant-led setup
+                    </Badge>
+                    <h2 className="oc-empty-title">{connected ? 'Live interview active' : 'Live interview ready'}</h2>
+                    <p className="oc-empty-copy">
+                        {connected
+                            ? 'Use the mic control to answer Officer Charles. The avatar responds live while audio is playing.'
+                            : 'Start a realtime voice session with Officer Charles. Microphone access is requested only when you start.'}
+                    </p>
+                </div>
+            </div>
+
+            {error && (
+                <div className="oc-error-banner mt-4">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{error}</span>
+                </div>
+            )}
+        </section>
+    );
+}
+
+function LiveMicControls({
+    connected,
+    connecting,
+    onEnd,
+    onStart,
+    onToggleRecording,
+    recording,
+}: {
+    connected: boolean;
+    connecting: boolean;
+    onEnd: () => void;
+    onStart: () => void;
+    onToggleRecording: () => void;
+    recording: boolean;
+}) {
+    const buttonLabel = !connected ? 'Start live interview' : recording ? 'Send answer' : 'Start speaking';
+
+    return (
+        <footer className="oc-live-control-wrap">
+            <div className="oc-live-control-panel">
+                <Button
+                    type="button"
+                    onClick={connected ? onToggleRecording : onStart}
+                    disabled={connecting}
+                    className={cn('oc-live-mic-button', recording && 'is-recording')}
+                    aria-label={buttonLabel}
+                >
+                    {connecting ? <Loader2 className="h-5 w-5 animate-spin" /> : connected ? <Mic className="h-6 w-6" /> : <Radio className="h-5 w-5" />}
+                </Button>
+                <span className="oc-live-mic-label">{buttonLabel}</span>
+                {connected && (
+                    <Button type="button" variant="ghost" onClick={onEnd} className="oc-live-end-inline">
+                        <PhoneOff className="h-4 w-4" />
+                        End
+                    </Button>
+                )}
+            </div>
+        </footer>
+    );
+}
+
+function MessageBubble({ message }: { message: ChatMessage }) {
+    const isUser = message.role === 'user';
+    const failed = message.status === 'failed';
+    const pending = message.status === 'pending';
+
+    return (
+        <article className={cn('flex gap-3 sm:gap-4', isUser ? 'justify-end' : 'justify-start')}>
+            {!isUser && (
+                <Avatar className="oc-avatar oc-avatar-assistant mt-1">
+                    <AvatarFallback>OC</AvatarFallback>
+                </Avatar>
+            )}
+
+            <div className={cn('flex max-w-[88%] flex-col gap-1.5 sm:max-w-[76%]', isUser ? 'items-end' : 'items-start')}>
+                {isFinalReport(message.content) && !isUser ? (
+                    <div className="oc-report-card">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--oc-border)] pb-3">
+                            <h3 className="oc-card-title">Visa Interview Performance Report</h3>
+                            <Badge className="oc-mode-badge" variant="outline">
+                                Consular evaluation
+                            </Badge>
+                        </div>
+                        <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
+                    </div>
+                ) : (
+                    <div className={cn(isUser ? 'oc-user-bubble' : 'oc-assistant-bubble', failed && 'is-failed', pending && 'is-pending')}>
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                    </div>
+                )}
+
+                <div className="oc-message-meta">
+                    <span>{formatTime(message.created_at)}</span>
+                    {pending && <span>Sending</span>}
+                    {failed && <span className="text-rose-500">Not sent</span>}
+                </div>
+            </div>
+
+            {isUser && (
+                <Avatar className="oc-avatar oc-avatar-user mt-1">
+                    <AvatarFallback>
+                        <User className="h-4 w-4" />
+                    </AvatarFallback>
+                </Avatar>
+            )}
+        </article>
+    );
+}
+
+function ThinkingBubble() {
+    return (
+        <article className="flex justify-start gap-3 sm:gap-4">
+            <Avatar className="oc-avatar oc-avatar-assistant mt-1">
+                <AvatarFallback>OC</AvatarFallback>
+            </Avatar>
+            <div className="oc-assistant-bubble">
+                <div className="flex items-center gap-3">
+                    <Loader2 className="h-4 w-4 animate-spin text-[var(--oc-accent)]" />
+                    <span>Officer Charles is reviewing your response...</span>
+                </div>
+            </div>
+        </article>
     );
 }

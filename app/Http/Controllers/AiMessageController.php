@@ -3,19 +3,35 @@
 namespace App\Http\Controllers;
 
 use App\Models\AiMessage;
+use App\Models\AiSessionState;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class AiMessageController extends Controller
 {
+    private const SESSION_TARGET = 12;
+
+    private const INACTIVITY_TIMEOUT_MINUTES = 5;
+
+    private const VISITOR_COOKIE = 'officer_charles_visitor';
+
+    private const SESSION_COOKIE_PREFIX = 'officer_charles_session_';
+
+    private const MODES = ['training', 'interview'];
+
+    private const VISA_TYPES = ['f1', 'b1_b2'];
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'content' => ['required', 'string', 'max:10000'],
             'mode' => ['nullable', 'string', 'in:training,interview'],
+            'visa_type' => ['nullable', 'string', 'in:f1,b1_b2'],
         ]);
 
         if ($validator->fails()) {
@@ -23,160 +39,436 @@ class AiMessageController extends Controller
         }
 
         $mode = $request->input('mode', 'interview');
+        $visaType = $request->input('visa_type', 'f1');
+        $visitorId = $this->visitorId($request);
+        $activeSession = $this->activeSession($request, $visitorId, $mode, $visaType);
+        $sessionId = $activeSession['session_id'];
 
-        $history = AiMessage::orderBy('created_at', 'asc')
+        $history = AiMessage::where('visitor_id', $visitorId)
+            ->where('session_id', $sessionId)
+            ->where('mode', $mode)
+            ->where('visa_type', $visaType)
+            ->whereNull('completed_at')
+            ->orderBy('created_at', 'asc')
             ->get(['role', 'content'])
             ->toArray();
 
         $userMessage = AiMessage::create([
+            'visitor_id' => $visitorId,
+            'session_id' => $sessionId,
             'role' => 'user',
             'content' => $request->input('content'),
             'mode' => $mode,
+            'visa_type' => $visaType,
         ]);
 
-        $response = $this->callAi($request->input('content'), $history, $mode);
+        try {
+            $coreResponse = $this->callCoreV3Chat($request->input('content'), $history, $mode, $visaType);
+        } catch (ConnectionException|\RuntimeException $exception) {
+            Log::error('Core V3 chat response error', ['message' => $exception->getMessage()]);
+
+            return $this->withSessionCookies(response()->json([
+                'message' => $this->coreV3UnavailableMessage($exception),
+                'user' => $userMessage,
+            ], 502), $visitorId, $mode, $visaType, $sessionId);
+        }
 
         $assistantMessage = AiMessage::create([
+            'visitor_id' => $visitorId,
+            'session_id' => $sessionId,
             'role' => 'assistant',
-            'content' => $response,
+            'content' => $coreResponse['content'],
             'mode' => $mode,
+            'visa_type' => $visaType,
         ]);
 
-        return response()->json([
+        $sessionState = $coreResponse['state'] ?? $this->defaultSessionState('chat');
+        $this->saveSessionState($visitorId, $sessionId, 'chat', $mode, $visaType, $sessionState);
+
+        $nextSessionId = $sessionId;
+        $sessionCompleted = false;
+
+        if ($this->isSessionComplete($mode, $coreResponse['content'], $history)) {
+            AiMessage::where('visitor_id', $visitorId)
+                ->where('session_id', $sessionId)
+                ->where('mode', $mode)
+                ->where('visa_type', $visaType)
+                ->update(['completed_at' => now()]);
+            AiSessionState::where('visitor_id', $visitorId)
+                ->where('session_id', $sessionId)
+                ->where('experience', 'chat')
+                ->update(['completed_at' => now()]);
+
+            $nextSessionId = (string) Str::uuid();
+            $sessionCompleted = true;
+        }
+
+        return $this->withSessionCookies(response()->json([
             'user' => $userMessage,
             'assistant' => $assistantMessage,
-        ], 201);
+            'session_completed' => $sessionCompleted,
+            'session_reset' => $activeSession['timed_out'],
+            'session_state' => $sessionState,
+        ], 201), $visitorId, $mode, $visaType, $nextSessionId);
     }
 
     public function index(Request $request): JsonResponse
     {
-        $messages = AiMessage::orderBy('created_at', 'asc')
-            ->get(['id', 'role', 'content', 'agent_id', 'created_at', 'mode']);
+        $visitorId = $this->visitorId($request);
+        $sessionMap = [];
 
-        return response()->json($messages);
-    }
-
-    private function callAi(string $userMessage, array $history, string $mode): string
-    {
-        $assistantCount = collect($history)->where('role', 'assistant')->count();
-        $systemPrompt = $this->buildSystemPrompt($mode, $assistantCount, empty($history));
-
-        $messages = [
-            ['role' => 'system', 'content' => $systemPrompt],
-        ];
-
-        foreach ($history as $msg) {
-            $messages[] = [
-                'role' => $msg['role'],
-                'content' => $msg['content'],
-            ];
+        foreach (self::MODES as $mode) {
+            foreach (self::VISA_TYPES as $visaType) {
+                $sessionMap[] = [
+                    'mode' => $mode,
+                    'visa_type' => $visaType,
+                    'session_id' => $this->activeSession($request, $visitorId, $mode, $visaType)['session_id'],
+                ];
+            }
         }
 
-        $messages[] = ['role' => 'user', 'content' => $userMessage];
+        $messages = AiMessage::where('visitor_id', $visitorId)
+            ->whereNull('completed_at')
+            ->where(function ($query) use ($sessionMap) {
+                foreach ($sessionMap as $session) {
+                    $query->orWhere(fn ($item) => $item
+                        ->where('mode', $session['mode'])
+                        ->where('visa_type', $session['visa_type'])
+                        ->where('session_id', $session['session_id']));
+                }
+            })
+            ->orderBy('created_at', 'asc')
+            ->get(['id', 'role', 'content', 'agent_id', 'created_at', 'mode', 'visa_type']);
 
-        $response = $this->callFoundryApi($messages);
+        $activeSession = $this->activeSession($request, $visitorId, 'training', 'f1');
 
-        if (str_starts_with($response, 'Sorry, I encountered an error')) {
-            $response = $this->callGeminiApi($messages);
+        return $this->withAllSessionCookies(response()->json([
+            'messages' => $messages,
+            'session_state' => $this->sessionState($visitorId, $activeSession['session_id'], 'chat', 'training', 'f1'),
+        ]), $visitorId, $sessionMap);
+    }
+
+    public function restart(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'mode' => ['required', 'string', 'in:training,interview'],
+            'visa_type' => ['nullable', 'string', 'in:f1,b1_b2'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $mode = $request->input('mode');
+        $visaType = $request->input('visa_type', 'f1');
+        $visitorId = $this->visitorId($request);
+        $sessionId = $this->activeSession($request, $visitorId, $mode, $visaType)['session_id'];
+
+        AiMessage::where('visitor_id', $visitorId)
+            ->where('session_id', $sessionId)
+            ->where('mode', $mode)
+            ->where('visa_type', $visaType)
+            ->whereNull('completed_at')
+            ->update(['completed_at' => now()]);
+        AiSessionState::where('visitor_id', $visitorId)
+            ->where('session_id', $sessionId)
+            ->where('experience', 'chat')
+            ->update(['completed_at' => now()]);
+
+        return $this->withSessionCookies(response()->json([
+            'messages' => [],
+            'session_restarted' => true,
+            'session_state' => $this->defaultSessionState('chat'),
+        ]), $visitorId, $mode, $visaType, (string) Str::uuid());
+    }
+
+    public function liveSession(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'mode' => ['required', 'string', 'in:training,interview'],
+            'visa_type' => ['required', 'string', 'in:f1,b1_b2'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $visitorId = $this->visitorId($request);
+        try {
+            $response = Http::timeout(20)
+                ->acceptJson()
+                ->post($this->coreV3BaseUrl().'/sessions', [
+                    'mode' => $request->input('mode'),
+                    'visa_type' => $request->input('visa_type'),
+                    'visitor_id' => $visitorId,
+                ]);
+        } catch (ConnectionException $exception) {
+            Log::error('Core V3 live session connection error', ['message' => $exception->getMessage()]);
+
+            return response()->json([
+                'message' => $this->coreV3UnavailableMessage($exception),
+            ], 502);
+        }
+
+        if ($response->failed()) {
+            Log::error('Core V3 live session error', [
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            return response()->json([
+                'message' => 'Could not start the live interview service.',
+            ], 502);
+        }
+
+        $sessionId = $response->json('session_id');
+
+        return $this->withVisitorCookie(response()->json([
+            'session_id' => $sessionId,
+            'ws_url' => rtrim(config('services.core_v3.ws_public_url'), '/').'/ws/'.$sessionId,
+            'session_state' => $this->defaultSessionState('live'),
+        ]), $visitorId);
+    }
+
+    /**
+     * @return array{content: string, state: array<string, mixed>|null}
+     */
+    private function callCoreV3Chat(string $userMessage, array $history, string $mode, string $visaType): array
+    {
+        if (! filled(config('services.gemini.api_key'))) {
+            throw new \RuntimeException('Gemini API key is not configured.');
+        }
+
+        $response = Http::timeout(60)
+            ->acceptJson()
+            ->post($this->coreV3BaseUrl().'/chat', [
+                'content' => $userMessage,
+                'history' => $history,
+                'mode' => $mode,
+                'visa_type' => $visaType,
+                'session_target' => self::SESSION_TARGET,
+                'gemini' => [
+                    'api_key' => config('services.gemini.api_key'),
+                    'model' => config('services.gemini.model', 'gemini-2.5-flash'),
+                    'fallback_model' => config('services.gemini.fallback_model', 'gemini-2.0-flash-lite'),
+                ],
+            ]);
+
+        if ($response->failed()) {
+            Log::error('Core V3 chat error', [
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            $detail = $response->json('detail');
+
+            throw new \RuntimeException(is_string($detail) ? $detail : 'Officer Charles could not process that message.');
+        }
+
+        return [
+            'content' => $response->json('content') ?? 'No response received.',
+            'state' => $response->json('state'),
+        ];
+    }
+
+    private function coreV3UnavailableMessage(\Throwable $exception): string
+    {
+        if ($exception instanceof ConnectionException) {
+            return 'Officer Charles core service is not running. Please start Core V3 and try again.';
+        }
+
+        return $exception->getMessage();
+    }
+
+    private function saveSessionState(
+        string $visitorId,
+        string $sessionId,
+        string $experience,
+        ?string $mode,
+        ?string $visaType,
+        array $state,
+    ): void {
+        AiSessionState::updateOrCreate(
+            [
+                'visitor_id' => $visitorId,
+                'session_id' => $sessionId,
+                'experience' => $experience,
+            ],
+            [
+                'mode' => $mode,
+                'visa_type' => $visaType,
+                'state' => $state,
+                'completed_at' => ! empty($state['completed']) ? now() : null,
+            ],
+        );
+    }
+
+    private function sessionState(
+        string $visitorId,
+        string $sessionId,
+        string $experience,
+        ?string $mode,
+        ?string $visaType,
+    ): array {
+        $sessionState = AiSessionState::where('visitor_id', $visitorId)
+            ->where('session_id', $sessionId)
+            ->where('experience', $experience)
+            ->whereNull('completed_at')
+            ->first(['state']);
+
+        return is_array($sessionState?->state) ? $sessionState->state : $this->defaultSessionState($experience, $mode, $visaType);
+    }
+
+    private function defaultSessionState(string $experience, ?string $mode = null, ?string $visaType = null): array
+    {
+        return [
+            'experience' => $experience,
+            'phase' => 'mode_selection',
+            'selected_mode' => null,
+            'selected_visa_type' => null,
+            'interview_status' => 'setup',
+            'current_question' => null,
+            'current_question_index' => 0,
+            'total_questions' => 0,
+            'answered_questions' => [],
+            'last_answer_quality' => null,
+            'evaluation_ready' => false,
+            'completed' => false,
+        ];
+    }
+
+    private function coreV3BaseUrl(): string
+    {
+        return rtrim(config('services.core_v3.base_url'), '/');
+    }
+
+    private function visitorId(Request $request): string
+    {
+        $visitorId = $request->cookie(self::VISITOR_COOKIE);
+
+        return is_string($visitorId) && Str::isUuid($visitorId) ? $visitorId : (string) Str::uuid();
+    }
+
+    /**
+     * @return array{session_id: string, timed_out: bool}
+     */
+    private function activeSession(Request $request, string $visitorId, string $mode, string $visaType): array
+    {
+        $cookieName = $this->sessionCookieName($mode, $visaType);
+        $sessionId = $request->cookie($cookieName);
+
+        if (is_string($sessionId) && Str::isUuid($sessionId)) {
+            $hasCompletedMessages = AiMessage::where('visitor_id', $visitorId)
+                ->where('session_id', $sessionId)
+                ->where('mode', $mode)
+                ->where('visa_type', $visaType)
+                ->whereNotNull('completed_at')
+                ->exists();
+
+            if (! $hasCompletedMessages) {
+                if ($this->sessionTimedOut($visitorId, $sessionId, $mode, $visaType)) {
+                    $this->completeSession($visitorId, $sessionId, $mode, $visaType);
+
+                    return ['session_id' => (string) Str::uuid(), 'timed_out' => true];
+                }
+
+                return ['session_id' => $sessionId, 'timed_out' => false];
+            }
+        }
+
+        $existingSessionId = AiMessage::where('visitor_id', $visitorId)
+            ->where('mode', $mode)
+            ->where('visa_type', $visaType)
+            ->whereNull('completed_at')
+            ->latest('created_at')
+            ->value('session_id');
+
+        if (is_string($existingSessionId) && Str::isUuid($existingSessionId)) {
+            if ($this->sessionTimedOut($visitorId, $existingSessionId, $mode, $visaType)) {
+                $this->completeSession($visitorId, $existingSessionId, $mode, $visaType);
+
+                return ['session_id' => (string) Str::uuid(), 'timed_out' => true];
+            }
+
+            return ['session_id' => $existingSessionId, 'timed_out' => false];
+        }
+
+        return ['session_id' => (string) Str::uuid(), 'timed_out' => false];
+    }
+
+    private function sessionTimedOut(string $visitorId, string $sessionId, string $mode, string $visaType): bool
+    {
+        $latestMessage = AiMessage::where('visitor_id', $visitorId)
+            ->where('session_id', $sessionId)
+            ->where('mode', $mode)
+            ->where('visa_type', $visaType)
+            ->whereNull('completed_at')
+            ->latest('created_at')
+            ->first(['role', 'created_at']);
+
+        return $latestMessage?->role === 'assistant'
+            && $latestMessage->created_at->lte(now()->subMinutes(self::INACTIVITY_TIMEOUT_MINUTES));
+    }
+
+    private function completeSession(string $visitorId, string $sessionId, string $mode, string $visaType): void
+    {
+        AiMessage::where('visitor_id', $visitorId)
+            ->where('session_id', $sessionId)
+            ->where('mode', $mode)
+            ->where('visa_type', $visaType)
+            ->whereNull('completed_at')
+            ->update(['completed_at' => now()]);
+    }
+
+    private function withAllSessionCookies(JsonResponse $response, string $visitorId, array $sessionMap): JsonResponse
+    {
+        $this->withVisitorCookie($response, $visitorId);
+
+        foreach ($sessionMap as $session) {
+            $this->queueCookie($response, $this->sessionCookieName($session['mode'], $session['visa_type']), $session['session_id']);
         }
 
         return $response;
     }
 
-    private function buildSystemPrompt(string $mode, int $assistantCount, bool $isEmpty): string
-    {
-        if ($mode === 'training') {
-            $start = $isEmpty
-                ? "You are a friendly US visa officer helping a student practice for their F-1 student visa interview.\n\nStart by introducing yourself briefly and asking your first question."
-                : "";
+    private function withSessionCookies(
+        JsonResponse $response,
+        string $visitorId,
+        string $mode,
+        string $visaType,
+        string $sessionId,
+    ): JsonResponse {
+        $this->withVisitorCookie($response, $visitorId);
+        $this->queueCookie($response, $this->sessionCookieName($mode, $visaType), $sessionId);
 
-            return $start . "\n\nYour role:\n- Ask relevant student visa interview questions\n- After each answer, provide constructive feedback to help the student improve\n- Be encouraging but honest\n\nFor each student answer, respond in this exact format:\n\nScore: X/100\n\nFeedback: [One sentence about the main problem with their answer]\n\nImprove: [Bullet points of specific things they should mention]\n- [Specific suggestion 1]\n- [Specific suggestion 2]\n\nNext: [The next interview question]\n\nExample:\nScore: 30/100\n\nFeedback: Your answer is too short and doesn't show clear academic purpose.\n\nImprove:\n- Mention the specific program and university\n- Explain career goals after graduation\n- Connect studies to opportunities in your home country\n\nNext: What specific program are you applying for and why does it interest you?\n\nKeep questions realistic for a US student visa interview. Cover: study plans, university choice, career goals, financial support, home country ties, post-graduation plans.";
-        }
-
-        $shouldReport = $assistantCount >= 12;
-
-        if ($shouldReport) {
-            return "You are a strict US visa officer conducting a real F-1 student visa interview simulation.\n\nThe interview is now complete (approximately 12 questions). Provide a final performance report in this format:\n\n=== FINAL REPORT ===\n\nOverall Score: X/100\n\nStrengths:\n- [Strength 1]\n- [Strength 2]\n\nConcerns:\n- [Concern 1]\n- [Concern 2]\n\nRisk Areas:\n- [Risk area 1]\n\nRecommendations:\n- [Recommendation 1]\n- [Recommendation 2]\n\nBe realistic and fair in your assessment.";
-        }
-
-        $start = $isEmpty
-            ? "You are a strict US visa officer conducting a real F-1 student visa interview simulation.\n\nStart by introducing yourself and asking your first question naturally."
-            : "";
-
-        return $start . "\n\nRules:\n- Ask ONE question at a time\n- NEVER provide feedback, hints, or examples during the interview\n- Be realistic, professional, and sometimes probing\n- This is a real interview simulation - the student must answer convincingly\n\nAsk questions relevant to F-1 student visa interviews: study plans, university choice, career goals, financial support, home country ties, post-graduation plans.\n\nDo NOT say 'Next question:' or provide any meta-commentary. Just ask the question naturally.";
+        return $response;
     }
 
-    private function callFoundryApi(array $messages): string
+    private function withVisitorCookie(JsonResponse $response, string $visitorId): JsonResponse
     {
-        $endpoint = config('services.foundry.endpoint');
-        $apiKey = config('services.foundry.api_key');
-        $agentId = config('services.foundry.agent_id');
+        $this->queueCookie($response, self::VISITOR_COOKIE, $visitorId);
 
-        $url = str_replace(
-            ['{AGENT_ID}'],
-            [$agentId],
-            $endpoint
-        ) . '?api-version=' . config('services.foundry.api_version', '1');
-
-        $response = Http::withHeaders([
-            'api-key' => $apiKey,
-            'Content-Type' => 'application/json',
-        ])->post($url, [
-            'messages' => $messages,
-        ]);
-
-        if ($response->failed()) {
-            Log::error('Foundry API error', [
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
-            return 'Sorry, I encountered an error processing your request. Status: ' . $response->status();
-        }
-
-        $data = $response->json();
-
-        return $data['choices'][0]['message']['content'] ?? $data['output'][0]['content'][0]['text'] ?? 'No response received.';
+        return $response;
     }
 
-    private function callGeminiApi(array $messages): string
+    private function queueCookie(JsonResponse $response, string $name, string $value): void
     {
-        $apiKey = config('services.gemini.api_key');
-        $model = config('services.gemini.model', 'gemini-2.0-flash');
+        $minutes = 60 * 24 * 365;
 
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+        $response->cookie($name, $value, $minutes, '/', null, false, true, false, 'lax');
+    }
 
-        $systemInstruction = null;
-        $contents = [];
+    private function sessionCookieName(string $mode, string $visaType): string
+    {
+        return self::SESSION_COOKIE_PREFIX.$mode.'_'.$visaType;
+    }
 
-        foreach ($messages as $msg) {
-            if ($msg['role'] === 'system') {
-                $systemInstruction = $msg['content'];
-                continue;
-            }
-
-            $role = $msg['role'] === 'assistant' ? 'model' : 'user';
-            $contents[] = [
-                'role' => $role,
-                'parts' => [['text' => $msg['content']]],
-            ];
+    private function isSessionComplete(string $mode, string $assistantResponse, array $history): bool
+    {
+        if (str_contains($assistantResponse, 'FINAL REPORT') || str_contains($assistantResponse, 'Performance Report')) {
+            return true;
         }
 
-        $payload = ['contents' => $contents];
-
-        if ($systemInstruction) {
-            $payload['systemInstruction'] = ['parts' => [['text' => $systemInstruction]]];
-        }
-
-        $response = Http::withHeaders([
-            'Content-Type' => 'application/json',
-        ])->post($url, $payload);
-
-        if ($response->failed()) {
-            return 'Sorry, I encountered an error processing your request. Status: ' . $response->status();
-        }
-
-        $data = $response->json();
-
-        return $data['candidates'][0]['content']['parts'][0]['text'] ?? 'No response received.';
+        return false;
     }
 }
