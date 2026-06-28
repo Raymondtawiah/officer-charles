@@ -250,7 +250,7 @@ class AiMessageController extends Controller
                 'gemini' => [
                     'api_key' => config('services.gemini.api_key'),
                     'model' => config('services.gemini.model', 'gemini-2.5-flash'),
-                    'fallback_model' => config('services.gemini.fallback_model', 'gemini-2.0-flash-lite'),
+                    'fallback_model' => config('services.gemini.fallback_model', 'gemini-2.5-flash-lite'),
                 ],
             ]);
 

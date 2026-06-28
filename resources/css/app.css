@@ -384,13 +384,13 @@
         min-height: 28rem;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
+        justify-content: stretch;
         border: 1px solid var(--oc-border);
         border-radius: 1.25rem;
         background:
             radial-gradient(circle at center top, color-mix(in oklab, var(--oc-accent) 18%, transparent), transparent 20rem),
             var(--oc-surface-soft);
-        padding: clamp(1rem, 3vw, 2rem);
+        padding: 0;
         text-align: center;
         overflow: hidden;
     }
@@ -398,21 +398,38 @@
     .oc-live-main {
         display: grid;
         width: 100%;
-        grid-template-columns: minmax(13rem, 0.85fr) minmax(16rem, 1fr);
-        gap: clamp(1rem, 4vw, 2.5rem);
-        align-items: center;
+        height: 100%;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 0;
+        align-items: stretch;
         justify-items: center;
+    }
+
+    .oc-live-avatar-zone {
+        position: relative;
+        display: flex;
+        width: 100%;
+        min-height: clamp(23rem, 58vh, 46rem);
+        flex: 1 1 auto;
+        align-items: flex-end;
+        justify-content: center;
+        overflow: hidden;
+        border-top: 1px solid var(--oc-border);
+        background:
+            radial-gradient(circle at 34% 28%, color-mix(in oklab, var(--oc-accent) 18%, transparent), transparent 22rem),
+            linear-gradient(180deg, transparent, color-mix(in oklab, var(--oc-surface-strong) 28%, transparent));
     }
 
     .oc-live-avatar-wrap {
         position: relative;
         display: flex;
-        width: min(100%, 24rem);
-        min-height: clamp(18rem, 45vh, 34rem);
+        width: min(100%, 62rem);
+        height: 100%;
+        min-height: inherit;
         align-items: flex-end;
         justify-content: center;
-        border-radius: 1.2rem;
-        background: radial-gradient(circle at 50% 18%, color-mix(in oklab, var(--oc-accent) 15%, transparent), transparent 18rem);
+        border-radius: 0;
+        background: transparent;
         transition: transform 180ms ease, filter 180ms ease;
     }
 
@@ -426,18 +443,61 @@
         filter: drop-shadow(0 22px 48px color-mix(in oklab, var(--oc-danger) 24%, transparent));
     }
 
+    .oc-live-avatar-stack {
+        position: relative;
+        display: flex;
+        width: min(62%, 38rem);
+        max-height: clamp(24rem, 68vh, 54rem);
+        align-items: flex-end;
+        justify-content: center;
+        transform: translateY(1px);
+    }
+
     .oc-live-avatar {
-        width: 100%;
-        max-height: clamp(18rem, 56vh, 38rem);
+        width: min(62%, 38rem);
+        max-height: clamp(24rem, 68vh, 54rem);
         object-fit: contain;
         object-position: bottom center;
         pointer-events: none;
         user-select: none;
+        transition:
+            opacity 260ms ease,
+            transform 320ms ease,
+            filter 320ms ease;
+        will-change: opacity, transform;
+    }
+
+    .oc-live-avatar-stack .oc-live-avatar {
+        width: 100%;
+        max-height: inherit;
+    }
+
+    .oc-live-avatar-speaking {
+        position: absolute;
+        inset: auto 0 0;
+        opacity: 0;
+        transform: translateY(0.35rem) scale(0.995);
+    }
+
+    .oc-live-avatar-still {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+
+    .oc-live-avatar-wrap.is-speaking .oc-live-avatar-speaking {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+
+    .oc-live-avatar-wrap.is-speaking .oc-live-avatar-still {
+        opacity: 0;
+        transform: translateY(0.2rem) scale(1.005);
     }
 
     .oc-live-avatar-loader {
         position: absolute;
         inset: 0;
+        z-index: 4;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -448,8 +508,11 @@
     }
 
     .oc-live-copy {
-        max-width: 25rem;
-        text-align: left;
+        position: relative;
+        z-index: 2;
+        max-width: 44rem;
+        padding: clamp(2rem, 5vh, 4rem) clamp(1rem, 4vw, 2rem);
+        text-align: center;
     }
 
     .oc-live-control-wrap {
@@ -553,6 +616,11 @@
         transition: transform 160ms ease, color 160ms ease, background 160ms ease, box-shadow 160ms ease;
     }
 
+    .oc-mode-button:focus-visible {
+        outline: 2px solid color-mix(in oklab, var(--oc-accent) 72%, white);
+        outline-offset: 2px;
+    }
+
     .oc-mode-button:hover {
         color: var(--oc-text);
         transform: translateY(-1px);
@@ -560,14 +628,18 @@
 
     .oc-mode-button.is-active {
         color: var(--oc-user-text);
-        box-shadow: 0 10px 28px color-mix(in oklab, var(--oc-accent) 20%, transparent);
+        box-shadow:
+            inset 0 1px 0 rgb(255 255 255 / 0.24),
+            0 10px 28px color-mix(in oklab, var(--oc-accent) 24%, transparent);
     }
 
-    .oc-mode-button.is-training {
+    .oc-mode-button.is-active.is-chat,
+    .oc-mode-button.is-active.is-training {
         background: linear-gradient(135deg, var(--oc-accent), color-mix(in oklab, var(--oc-accent-2) 65%, var(--oc-accent)));
     }
 
-    .oc-mode-button.is-interview {
+    .oc-mode-button.is-active.is-live,
+    .oc-mode-button.is-active.is-interview {
         background: linear-gradient(135deg, var(--oc-danger), color-mix(in oklab, var(--oc-gold) 42%, var(--oc-danger)));
     }
 
@@ -805,16 +877,71 @@
         margin-bottom: 0.5rem;
     }
 
-    .oc-mobile-summary {
+    .oc-mobile-details-trigger {
         display: flex;
+        width: 100%;
         align-items: center;
         gap: 0.85rem;
+        height: auto;
         border: 1px solid var(--oc-border);
         border-radius: 1.1rem;
         padding: 0.8rem;
+        color: var(--oc-text);
         background: var(--oc-surface);
         box-shadow: var(--oc-shadow-soft);
         backdrop-filter: blur(20px);
+    }
+
+    .oc-mobile-details-action {
+        flex: 0 0 auto;
+        border: 1px solid var(--oc-border);
+        border-radius: 999px;
+        padding: 0.35rem 0.65rem;
+        color: var(--oc-accent);
+        background: var(--oc-surface-soft);
+        font-size: 0.72rem;
+        font-weight: 850;
+    }
+
+    .oc-mobile-details-sheet {
+        max-height: min(88vh, 46rem);
+        border-color: var(--oc-border);
+        border-radius: 1.25rem 1.25rem 0 0;
+        background: var(--oc-page);
+        color: var(--oc-text);
+        gap: 0;
+        padding: 0;
+    }
+
+    .oc-mobile-details-header {
+        border-bottom: 1px solid var(--oc-border);
+        padding: 1rem 1.1rem 0.85rem;
+    }
+
+    .oc-mobile-details-scroll {
+        display: flex;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 0.85rem;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 1rem;
+        scrollbar-width: thin;
+        scrollbar-color: color-mix(in oklab, var(--oc-accent) 42%, transparent) transparent;
+    }
+
+    .oc-mobile-sheet-transcript {
+        flex: 0 0 auto;
+        min-height: 20rem;
+    }
+
+    .oc-mobile-details-scroll .oc-session-stats span {
+        font-size: 0.92rem;
+        line-height: 1.08;
+    }
+
+    .oc-mobile-details-scroll .oc-session-stats p {
+        font-size: 0.72rem;
     }
 
     .oc-composer-wrap {
@@ -1083,6 +1210,10 @@
             min-height: clamp(14rem, 36vh, 23rem);
         }
 
+        .oc-live-avatar-stack {
+            max-height: clamp(14rem, 40vh, 24rem);
+        }
+
         .oc-live-avatar {
             max-height: clamp(14rem, 40vh, 24rem);
         }
@@ -1192,6 +1323,10 @@
             min-height: clamp(11rem, 30vh, 17rem);
         }
 
+        .oc-live-avatar-stack {
+            max-height: clamp(11rem, 33vh, 18rem);
+        }
+
         .oc-live-avatar {
             max-height: clamp(11rem, 33vh, 18rem);
         }
@@ -1234,35 +1369,35 @@
             margin-bottom: 0.15rem;
         }
 
-        .oc-mobile-summary {
+        .oc-mobile-details-trigger {
             gap: 0.7rem;
             border-radius: 0.95rem;
             padding: 0.62rem;
         }
 
-        .oc-mobile-summary .oc-card-icon {
+        .oc-mobile-details-trigger .oc-card-icon {
             width: 2.25rem;
             height: 2.25rem;
             border-radius: 0.75rem;
         }
 
-        .oc-mobile-summary .oc-card-copy {
+        .oc-mobile-details-trigger .oc-card-copy {
             margin-top: 0.35rem;
             font-size: 0.75rem;
             line-height: 1.2;
         }
 
-        .oc-mobile-summary .oc-kicker {
+        .oc-mobile-details-trigger .oc-kicker {
             margin-bottom: 0.1rem;
             font-size: 0.62rem;
         }
 
-        .oc-mobile-summary .oc-card-title,
-        .oc-mobile-summary .oc-progress-value {
+        .oc-mobile-details-trigger .oc-card-title,
+        .oc-mobile-details-trigger .oc-progress-value {
             font-size: 0.9rem;
         }
 
-        .oc-mobile-summary .oc-progress-track {
+        .oc-mobile-details-trigger .oc-progress-track {
             height: 0.45rem;
         }
 
@@ -1401,7 +1536,7 @@
     }
 
     .oc-chat-layout {
-        grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr) minmax(18rem, 21rem);
+        grid-template-columns: minmax(0, 1fr) minmax(18rem, 21rem);
     }
 
     .oc-live-layout {
@@ -1449,7 +1584,6 @@
         margin: 0 0 0.65rem;
     }
 
-    .oc-assistant-portrait-panel,
     .oc-live-side {
         display: flex;
         min-height: 0;
@@ -1457,56 +1591,12 @@
         gap: 0.85rem;
     }
 
-    .oc-assistant-portrait,
     .oc-session-summary-panel {
         border: 1px solid var(--oc-border);
         border-radius: 1.25rem;
         background: var(--oc-surface);
         box-shadow: var(--oc-shadow);
         backdrop-filter: blur(24px);
-    }
-
-    .oc-assistant-portrait {
-        display: flex;
-        flex: 1 1 auto;
-        min-height: 0;
-        flex-direction: column;
-        justify-content: flex-end;
-        overflow: hidden;
-    }
-
-    .oc-assistant-portrait-media {
-        display: flex;
-        min-height: 0;
-        flex: 1 1 auto;
-        align-items: flex-end;
-        justify-content: center;
-        padding: 1rem 0.6rem 0;
-        background:
-            radial-gradient(circle at 50% 18%, color-mix(in oklab, var(--oc-accent) 17%, transparent), transparent 17rem),
-            linear-gradient(180deg, color-mix(in oklab, var(--oc-accent-2) 9%, transparent), transparent);
-    }
-
-    .oc-assistant-portrait-image {
-        width: min(100%, 18rem);
-        max-height: 100%;
-        object-fit: contain;
-        object-position: bottom center;
-        pointer-events: none;
-        user-select: none;
-    }
-
-    .oc-assistant-portrait-status {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.45rem;
-        border-top: 1px solid var(--oc-border);
-        padding: 0.85rem;
-        color: var(--oc-muted);
-        font-size: 0.82rem;
-        font-weight: 750;
-        text-align: center;
     }
 
     .oc-speaking-dot {
@@ -1542,27 +1632,38 @@
         height: 100%;
         min-height: 0;
         border-radius: 1.35rem;
-        padding: clamp(1rem, 2vw, 1.5rem);
+        padding: 0;
     }
 
     .oc-live-main {
-        grid-template-columns: 1fr;
         height: 100%;
-        align-content: center;
-        gap: clamp(0.75rem, 2vh, 1.25rem);
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(0, 1fr);
+        align-content: stretch;
+        gap: 0;
+    }
+
+    .oc-live-avatar-zone {
+        min-height: clamp(25rem, 64vh, 50rem);
     }
 
     .oc-live-avatar-wrap {
-        width: min(100%, 35rem);
-        min-height: clamp(18rem, 56vh, 42rem);
+        width: min(100%, 64rem);
+        min-height: inherit;
+    }
+
+    .oc-live-avatar-stack {
+        width: min(62%, 40rem);
+        max-height: clamp(25rem, 72vh, 56rem);
     }
 
     .oc-live-avatar {
-        max-height: clamp(18rem, 64vh, 44rem);
+        max-height: clamp(25rem, 72vh, 56rem);
     }
 
     .oc-live-copy {
-        max-width: 34rem;
+        max-width: 44rem;
+        padding: clamp(2rem, 5vh, 4rem) clamp(1rem, 4vw, 2rem);
         text-align: center;
     }
 
@@ -1589,6 +1690,10 @@
         box-shadow: none;
     }
 
+    .oc-live-start-control {
+        display: block;
+    }
+
     .oc-live-empty {
         display: flex;
         min-height: 100%;
@@ -1612,17 +1717,42 @@
         line-height: 1.5;
     }
 
-    .oc-mobile-summary {
+    .oc-mobile-details {
         display: none;
     }
 
     @media (max-width: 1180px) {
         .oc-chat-layout {
-            grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+            grid-template-columns: minmax(0, 1fr);
         }
 
         .oc-chat-layout > .oc-sidebar-shell {
             display: none;
+        }
+
+        .oc-header-actions > .oc-mobile-details {
+            display: block;
+            flex: 0 0 auto;
+        }
+
+        .oc-header-actions .oc-mobile-details-trigger {
+            width: auto;
+            min-height: 2.35rem;
+            border-radius: 0.8rem;
+            padding: 0 0.8rem;
+            box-shadow: none;
+        }
+
+        .oc-header-actions .oc-mobile-details-trigger > .oc-card-icon,
+        .oc-header-actions .oc-mobile-details-trigger > .min-w-0 {
+            display: none;
+        }
+
+        .oc-header-actions .oc-mobile-details-action {
+            border: 0;
+            padding: 0;
+            background: transparent;
+            font-size: 0.82rem;
         }
     }
 
@@ -1639,7 +1769,7 @@
 
         .oc-header-actions {
             display: grid !important;
-            grid-template-columns: minmax(0, 1fr) auto auto;
+            grid-template-columns: minmax(0, 1fr) auto auto auto;
             gap: 0.55rem;
         }
 
@@ -1659,12 +1789,29 @@
             grid-template-columns: 1fr;
         }
 
-        .oc-assistant-portrait {
-            min-height: 20rem;
+        .oc-mobile-details {
+            display: block;
+            flex: 0 0 auto;
         }
 
-        .oc-assistant-portrait-panel .oc-mobile-summary {
-            display: flex;
+        .oc-header-actions .oc-mobile-details-trigger {
+            width: auto;
+            min-height: 2.35rem;
+            border-radius: 0.8rem;
+            padding: 0 0.8rem;
+            box-shadow: none;
+        }
+
+        .oc-header-actions .oc-mobile-details-trigger > .oc-card-icon,
+        .oc-header-actions .oc-mobile-details-trigger > .min-w-0 {
+            display: none;
+        }
+
+        .oc-header-actions .oc-mobile-details-action {
+            border: 0;
+            padding: 0;
+            background: transparent;
+            font-size: 0.82rem;
         }
 
         .oc-chat-primary-panel,
@@ -1676,14 +1823,40 @@
             min-height: clamp(28rem, 66vh, 40rem);
         }
 
+        .oc-live-avatar-zone {
+            min-height: clamp(22rem, 52vh, 34rem);
+        }
+
+        .oc-live-avatar-wrap {
+            justify-content: center;
+        }
+
+        .oc-live-avatar-stack {
+            width: min(86%, 30rem);
+            max-height: clamp(22rem, 58vh, 38rem);
+        }
+
+        .oc-live-avatar {
+            max-height: clamp(22rem, 58vh, 38rem);
+        }
+
+        .oc-live-start-control {
+            display: block;
+        }
+
         .oc-live-side {
-            min-height: 38rem;
+            min-height: 0;
+        }
+
+        .oc-live-side > .oc-session-summary-panel,
+        .oc-live-side > .oc-live-transcript-panel {
+            display: none;
         }
     }
 
     @media (max-width: 640px) {
         .oc-header-actions {
-            grid-template-columns: 1fr auto;
+            grid-template-columns: 1fr auto auto;
         }
 
         .oc-mode-control {
@@ -1713,14 +1886,6 @@
             padding: 0.65rem;
         }
 
-        .oc-assistant-portrait {
-            min-height: 17rem;
-        }
-
-        .oc-assistant-portrait-image {
-            width: min(100%, 13rem);
-        }
-
         .oc-chat-primary-panel,
         .oc-live-transcript-panel {
             min-height: 28rem;
@@ -1728,20 +1893,649 @@
 
         .oc-live-stage {
             min-height: 26rem;
-            padding: 0.85rem;
+            padding: 0;
         }
 
-        .oc-live-avatar-wrap {
-            width: min(100%, 18rem);
-            min-height: clamp(13rem, 38vh, 20rem);
+        .oc-live-copy {
+            padding: 1.25rem 0.85rem 1rem;
+        }
+
+        .oc-live-avatar-zone {
+            min-height: clamp(18rem, 44vh, 26rem);
+        }
+
+        .oc-live-avatar-stack {
+            width: min(92%, 20rem);
+            max-height: clamp(18rem, 48vh, 28rem);
         }
 
         .oc-live-avatar {
-            max-height: clamp(13rem, 42vh, 22rem);
+            max-height: clamp(18rem, 48vh, 28rem);
         }
 
         .oc-live-side {
-            min-height: 34rem;
+            min-height: 0;
+        }
+    }
+}
+
+@layer components {
+    .oc-live-side,
+    .oc-session-summary-panel,
+    .oc-sidebar-card,
+    .oc-latest-response,
+    .oc-check-item,
+    .oc-live-control-panel,
+    .oc-mobile-details-trigger {
+        min-width: 0;
+    }
+
+    .oc-card-title,
+    .oc-card-copy,
+    .oc-latest-response p,
+    .oc-check-item p,
+    .oc-live-mic-label,
+    .oc-empty-title {
+        overflow-wrap: anywhere;
+    }
+
+    .oc-session-stats,
+    .oc-session-stats > div {
+        min-width: 0;
+    }
+
+    .oc-session-stats span,
+    .oc-session-stats p {
+        overflow-wrap: anywhere;
+    }
+
+    .oc-live-copy {
+        flex: 0 0 auto;
+    }
+
+    .oc-live-avatar-zone,
+    .oc-live-avatar-wrap,
+    .oc-live-avatar-stack {
+        min-height: 0;
+    }
+
+    .oc-live-avatar-stack {
+        height: 100%;
+    }
+
+    .oc-live-avatar {
+        height: 100%;
+        max-height: 100%;
+    }
+
+    .oc-live-start-control .oc-live-control-panel,
+    .oc-mobile-details-scroll .oc-live-control-panel {
+        justify-content: flex-start;
+    }
+
+    .oc-mobile-details-sheet {
+        display: flex;
+        flex-direction: column;
+    }
+
+    @media (max-width: 1180px) {
+        .oc-chat-layout {
+            height: 100%;
+            min-height: 0;
+        }
+
+        .oc-chat-primary-panel {
+            height: 100%;
+            min-height: 0;
+        }
+    }
+
+    @media (max-width: 1023px) {
+        .oc-experience-main {
+            overflow: hidden;
+        }
+
+        .oc-chat-layout,
+        .oc-live-layout {
+            height: 100%;
+            min-height: 0;
+        }
+
+        .oc-chat-primary-panel,
+        .oc-live-transcript-panel {
+            min-height: 0;
+        }
+
+        .oc-live-layout {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: minmax(0, 1fr);
+        }
+
+        .oc-live-stage {
+            height: 100%;
+            min-height: 0;
+        }
+
+        .oc-live-main {
+            min-height: 0;
+            grid-template-rows: auto minmax(0, 1fr);
+        }
+
+        .oc-live-copy {
+            padding: clamp(0.9rem, 3vh, 1.6rem) clamp(0.85rem, 3vw, 1.25rem);
+        }
+
+        .oc-live-copy .oc-empty-title {
+            max-width: min(100%, 38rem);
+            margin-inline: auto;
+            font-size: clamp(1.35rem, 4.5vw, 2rem);
+            line-height: 1.08;
+        }
+
+        .oc-live-avatar-zone {
+            min-height: 0;
+        }
+
+        .oc-live-avatar-wrap {
+            width: min(100%, 40rem);
+            min-height: 0;
+        }
+
+        .oc-live-avatar-stack {
+            width: min(84%, 30rem);
+            max-height: 100%;
+        }
+
+        .oc-live-avatar {
+            max-height: 100%;
+        }
+
+        .oc-live-side {
+            display: none;
+        }
+
+        .oc-mobile-details-sheet {
+            max-height: min(90dvh, 44rem);
+        }
+
+        .oc-mobile-details-scroll {
+            gap: 0.65rem;
+            padding: 0.75rem;
+        }
+
+        .oc-mobile-details-scroll .oc-session-summary-panel,
+        .oc-mobile-details-scroll .oc-sidebar-card {
+            border-radius: 1rem;
+            padding: 0.72rem;
+            box-shadow: var(--oc-shadow-soft);
+        }
+
+        .oc-mobile-details-scroll .oc-progress-block,
+        .oc-mobile-details-scroll .oc-session-stats > div,
+        .oc-mobile-details-scroll .oc-latest-response,
+        .oc-mobile-details-scroll .oc-check-item {
+            border-radius: 0.75rem;
+            padding: 0.55rem;
+        }
+
+        .oc-mobile-details-scroll .oc-card-title {
+            font-size: 0.92rem;
+            line-height: 1.15;
+        }
+
+        .oc-mobile-details-scroll .oc-card-copy,
+        .oc-mobile-details-scroll .oc-latest-response p:last-child,
+        .oc-mobile-details-scroll .oc-check-item {
+            font-size: 0.76rem;
+            line-height: 1.35;
+        }
+
+        .oc-mobile-details-scroll .oc-live-control-wrap {
+            padding: 0.6rem;
+        }
+
+        .oc-mobile-details-scroll .oc-live-control-panel {
+            min-height: 3.45rem;
+            gap: 0.65rem;
+            padding: 0.5rem 0.6rem;
+        }
+
+        .oc-mobile-details-scroll .oc-live-mic-button {
+            width: 2.55rem;
+            height: 2.55rem;
+            border-radius: 0.8rem;
+        }
+
+        .oc-mobile-details-scroll .oc-live-mic-label {
+            font-size: 0.78rem;
+        }
+
+        .oc-mobile-sheet-transcript {
+            flex: 1 1 auto;
+            min-height: 12rem;
+        }
+    }
+
+    @media (max-width: 640px) {
+        .oc-header {
+            padding: 0.55rem 0.65rem;
+        }
+
+        .oc-header-inner {
+            gap: 0.5rem;
+        }
+
+        .oc-experience-main {
+            padding: 0.55rem;
+        }
+
+        .oc-chat-scroll {
+            padding: 0.65rem;
+        }
+
+        .oc-composer-wrap {
+            padding: 0.55rem;
+        }
+
+        .oc-live-copy {
+            padding: 0.8rem 0.7rem 0.7rem;
+        }
+
+        .oc-live-copy .oc-empty-title {
+            font-size: clamp(1.08rem, 5.8vw, 1.45rem);
+        }
+
+        .oc-live-avatar-stack {
+            width: min(94%, 22rem);
+        }
+
+        .oc-mobile-details-sheet {
+            max-height: 92dvh;
+        }
+
+        .oc-mobile-details-header {
+            padding: 0.8rem 0.85rem 0.7rem;
+        }
+
+        .oc-mobile-details-scroll {
+            gap: 0.55rem;
+            padding: 0.65rem;
+        }
+
+        .oc-mobile-details-scroll .oc-session-summary-panel,
+        .oc-mobile-details-scroll .oc-sidebar-card {
+            padding: 0.62rem;
+        }
+
+        .oc-mobile-details-scroll .oc-session-stats {
+            gap: 0.45rem;
+        }
+
+        .oc-mobile-details-scroll .oc-session-stats span {
+            font-size: 0.82rem;
+        }
+
+        .oc-mobile-sheet-transcript {
+            min-height: 10rem;
+        }
+    }
+
+    @media (max-width: 380px), (max-height: 680px) {
+        .oc-brand-mark {
+            width: 2.1rem;
+            height: 2.1rem;
+        }
+
+        .oc-subtle {
+            display: none;
+        }
+
+        .oc-header-actions {
+            gap: 0.4rem;
+        }
+
+        .oc-mode-button {
+            min-height: 2rem;
+        }
+
+        .oc-icon-button,
+        .oc-header-restart,
+        .oc-header-actions .oc-mobile-details-trigger {
+            min-height: 2.15rem;
+            height: 2.15rem;
+        }
+
+        .oc-live-copy {
+            padding-block: 0.6rem;
+        }
+
+        .oc-live-copy .oc-empty-title {
+            font-size: 1rem;
+        }
+
+        .oc-composer-wrap {
+            padding: 0.45rem;
+        }
+
+        .oc-textarea {
+            min-height: 2.35rem;
+        }
+    }
+}
+
+@layer components {
+    .oc-live-avatar-zone.has-stage-start {
+        padding-bottom: clamp(5.25rem, 10vh, 6.75rem);
+    }
+
+    .oc-live-stage-start {
+        position: absolute;
+        right: clamp(0.75rem, 3vw, 1.25rem);
+        bottom: clamp(0.75rem, 2vh, 1rem);
+        left: clamp(0.75rem, 3vw, 1.25rem);
+        z-index: 5;
+        display: flex;
+        justify-content: center;
+        pointer-events: none;
+    }
+
+    .oc-live-stage-start .oc-live-control-wrap {
+        width: min(100%, 28rem);
+        border: 0;
+        background: transparent;
+        padding: 0;
+        box-shadow: none;
+        backdrop-filter: none;
+        pointer-events: auto;
+    }
+
+    .oc-live-stage-start .oc-live-control-panel {
+        min-height: 4.1rem;
+        justify-content: center;
+        border-color: var(--oc-border-strong);
+        background: color-mix(in oklab, var(--oc-surface-strong) 94%, transparent);
+        box-shadow: var(--oc-shadow-soft);
+    }
+
+    .oc-live-stage-start .oc-live-mic-label {
+        flex: 0 1 auto;
+        text-align: left;
+    }
+
+    @media (max-width: 1023px) {
+        .oc-live-avatar-zone.has-stage-start {
+            padding-bottom: clamp(4.75rem, 12vh, 5.8rem);
+        }
+
+        .oc-live-stage-start .oc-live-control-wrap {
+            width: min(92%, 24rem);
+        }
+    }
+
+    @media (max-width: 640px) {
+        .oc-live-avatar-zone.has-stage-start {
+            padding-bottom: 4.45rem;
+        }
+
+        .oc-live-stage-start {
+            right: 0.65rem;
+            bottom: 0.6rem;
+            left: 0.65rem;
+        }
+
+        .oc-live-stage-start .oc-live-control-panel {
+            min-height: 3.65rem;
+            gap: 0.65rem;
+            padding: 0.55rem 0.7rem;
+        }
+
+        .oc-live-stage-start .oc-live-mic-button {
+            width: 2.55rem;
+            height: 2.55rem;
+            border-radius: 0.8rem;
+        }
+
+        .oc-live-stage-start .oc-live-mic-label {
+            font-size: 0.8rem;
+        }
+    }
+
+    @media (max-height: 680px) {
+        .oc-live-avatar-zone.has-stage-start {
+            padding-bottom: 4rem;
+        }
+
+        .oc-live-stage-start .oc-live-control-panel {
+            min-height: 3.35rem;
+            padding-block: 0.45rem;
+        }
+
+        .oc-live-stage-start .oc-live-mic-button {
+            width: 2.35rem;
+            height: 2.35rem;
+        }
+    }
+}
+
+@layer components {
+    @media (max-width: 1023px) {
+        .oc-mobile-details-sheet {
+            height: min(86dvh, 42rem);
+            max-height: min(86dvh, 42rem);
+            overflow: hidden;
+        }
+
+        .oc-mobile-details-header {
+            flex: 0 0 auto;
+        }
+
+        .oc-mobile-details-scroll {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-mobile-details-scroll {
+            gap: 0.55rem;
+            padding: 0.65rem 0.65rem calc(0.8rem + env(safe-area-inset-bottom));
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-sidebar-card {
+            border-radius: 0.95rem;
+            padding: 0.68rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-card {
+            background:
+                radial-gradient(circle at top right, color-mix(in oklab, var(--oc-accent) 16%, transparent), transparent 12rem),
+                var(--oc-surface);
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-card > .flex:first-child {
+            gap: 0.65rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-card-icon {
+            width: 2.35rem;
+            height: 2.35rem;
+            border-radius: 0.8rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-card-copy {
+            margin-top: 0.45rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-stats {
+            grid-template-columns: 1fr;
+            margin-top: 0.6rem;
+            gap: 0.45rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-latest-response {
+            margin-top: 0.45rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-card > .mt-4 {
+            margin-top: 0.55rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-restart-button {
+            min-height: 2.25rem;
+            margin-top: 0.55rem;
+            border-radius: 0.75rem;
+            font-size: 0.76rem;
+        }
+    }
+
+    @media (max-width: 640px) {
+        .oc-mobile-details-sheet {
+            height: 82dvh;
+            max-height: 82dvh;
+        }
+
+        .oc-mobile-details-header {
+            padding: 0.7rem 0.85rem 0.6rem;
+        }
+
+        .oc-mobile-details-header [data-slot='sheet-title'] {
+            font-size: 1.05rem;
+            line-height: 1.15;
+        }
+
+        .oc-mobile-details-header [data-slot='sheet-description'] {
+            font-size: 0.8rem;
+            line-height: 1.35;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-sidebar-card {
+            padding: 0.58rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-kicker {
+            margin-bottom: 0.12rem;
+            font-size: 0.62rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-card-title {
+            font-size: 0.86rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-card-copy,
+        .oc-mobile-details-sheet.is-chat .oc-latest-response p:last-child {
+            font-size: 0.72rem;
+            line-height: 1.3;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-stats span {
+            font-size: 0.78rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-stats p {
+            font-size: 0.68rem;
+        }
+    }
+}
+
+@layer components {
+    @media (max-width: 1023px) {
+        .oc-mobile-details-sheet.is-chat .oc-mobile-details-scroll {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow-y: auto;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-summary-panel {
+            flex: 0 0 auto;
+            border-radius: 1rem;
+            padding: 0.72rem;
+            box-shadow: var(--oc-shadow-soft);
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-progress-block,
+        .oc-mobile-details-sheet.is-chat .oc-session-stats > div,
+        .oc-mobile-details-sheet.is-chat .oc-latest-response {
+            border-radius: 0.75rem;
+            padding: 0.55rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-summary-panel > .oc-subtle {
+            margin-top: -0.1rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-restart-button {
+            flex: 0 0 auto;
+            min-height: 2.45rem;
+            border-radius: 0.8rem;
+        }
+    }
+
+    @media (max-width: 640px) {
+        .oc-mobile-details-sheet.is-chat .oc-session-summary-panel {
+            gap: 0.5rem;
+            padding: 0.62rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-progress-block {
+            padding: 0.5rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-progress-block .mb-3 {
+            margin-bottom: 0.45rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-session-stats {
+            grid-template-columns: 1fr;
+            gap: 0.45rem;
+        }
+
+        .oc-mobile-details-sheet.is-chat .oc-restart-button {
+            min-height: 2.25rem;
+            font-size: 0.76rem;
+        }
+    }
+}
+
+@layer components {
+    .oc-icon-button {
+        display: inline-flex;
+        width: 2.65rem;
+        height: 2.65rem;
+        min-width: 2.65rem;
+        min-height: 2.65rem;
+        align-items: center;
+        justify-content: center;
+        padding: 0.58rem;
+        box-sizing: border-box;
+        flex: 0 0 auto;
+    }
+
+    .oc-icon-button svg {
+        width: 1.05rem;
+        height: 1.05rem;
+        flex: 0 0 auto;
+    }
+
+    @media (max-width: 640px) {
+        .oc-icon-button {
+            width: 2.45rem;
+            height: 2.45rem;
+            min-width: 2.45rem;
+            min-height: 2.45rem;
+            padding: 0.52rem;
+            border-radius: 0.8rem;
+        }
+    }
+
+    @media (max-width: 380px), (max-height: 680px) {
+        .oc-icon-button {
+            width: 2.35rem;
+            height: 2.35rem;
+            min-width: 2.35rem;
+            min-height: 2.35rem;
+            padding: 0.5rem;
         }
     }
 }

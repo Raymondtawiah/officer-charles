@@ -21,6 +21,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+    Sheet,
+    SheetContent,
+    SheetDescription,
+    SheetHeader,
+    SheetTitle,
+    SheetTrigger,
+} from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 
 type MessageRole = 'user' | 'assistant';
@@ -259,6 +267,7 @@ export function ChatExperience({ messages }: Props) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const liveMessagesEndRef = useRef<HTMLDivElement>(null);
+    const mobileLiveMessagesEndRef = useRef<HTMLDivElement>(null);
     const wsRef = useRef<WebSocket | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const audioStreamRef = useRef<MediaStream | null>(null);
@@ -336,6 +345,7 @@ export function ChatExperience({ messages }: Props) {
 
     useEffect(() => {
         liveMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        mobileLiveMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }, [activeLiveMessages]);
 
     useEffect(() => {
@@ -775,12 +785,65 @@ return;
 
     useEffect(() => () => stopLiveInterview(), [stopLiveInterview]);
 
+    const mobileDetailsSheet = (
+        <MobileDetailsSheet
+            latestAssistant={activeSidebarAssistant}
+            experience={experienceMode === 'live' ? experienceContent.live : experienceContent.chat}
+            sessionState={activeSessionState}
+            userCount={activeSidebarUserCount}
+        >
+            {experienceMode === 'live' ? (
+                <>
+                    <SessionProgressPanel
+                        latestAssistant={activeSidebarAssistant}
+                        experience={experienceContent.live}
+                        sessionState={activeSessionState}
+                        userCount={activeSidebarUserCount}
+                    />
+                    <LiveMicControls
+                        connected={liveConnected}
+                        onEnd={stopLiveInterview}
+                        onToggleRecording={toggleLiveRecording}
+                        recording={liveRecording}
+                    />
+                    <section className="oc-chat-panel oc-live-transcript-panel oc-mobile-sheet-transcript">
+                        <ChatTranscript
+                            empty={<LiveTranscriptEmpty connected={liveConnected} />}
+                            endRef={mobileLiveMessagesEndRef}
+                            messages={activeLiveMessages}
+                        />
+                    </section>
+                </>
+            ) : (
+                <>
+                    <SessionProgressPanel
+                        latestAssistant={activeSidebarAssistant}
+                        experience={experienceContent.chat}
+                        sessionState={activeSessionState}
+                        userCount={activeSidebarUserCount}
+                    />
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => void restartActiveInterview()}
+                        disabled={restartingSession}
+                        className="oc-restart-button w-full"
+                    >
+                        <RotateCcw className={cn('h-4 w-4', restartingSession && 'animate-spin')} />
+                        Restart interview
+                    </Button>
+                </>
+            )}
+        </MobileDetailsSheet>
+    );
+
     return (
         <main data-oc-theme={theme} className="oc-page h-dvh overflow-hidden font-sans">
             <div className="oc-shell flex h-full min-h-0 flex-col">
                 <InterviewHeader
                     experienceMode={experienceMode}
                     loading={loadingMessages || syncingMessages}
+                    mobileDetails={mobileDetailsSheet}
                     onRestart={() => void restartActiveInterview()}
                     onSelectMode={selectExperienceMode}
                     onToggleTheme={() => setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))}
@@ -795,6 +858,7 @@ return;
                                 connected={liveConnected}
                                 connecting={liveConnecting}
                                 error={liveError}
+                                onStart={startLiveInterview}
                                 recording={liveRecording}
                                 speaking={liveSpeaking}
                             />
@@ -815,9 +879,7 @@ return;
                                 </section>
                                 <LiveMicControls
                                     connected={liveConnected}
-                                    connecting={liveConnecting}
                                     onEnd={stopLiveInterview}
-                                    onStart={startLiveInterview}
                                     onToggleRecording={toggleLiveRecording}
                                     recording={liveRecording}
                                 />
@@ -825,15 +887,6 @@ return;
                         </div>
                     ) : (
                         <div className="oc-chat-layout">
-                            <section className="oc-assistant-portrait-panel">
-                                <AssistantPortrait talking={submitting} />
-                                <MobileSummary
-                                    experience={experienceContent.chat}
-                                    sessionState={activeSessionState}
-                                    userCount={activeSidebarUserCount}
-                                />
-                            </section>
-
                             <section className="oc-chat-panel oc-chat-primary-panel">
                                 <ChatTranscript
                                     empty={loadingMessages ? <LoadingState /> : <EmptyState onSelectPrompt={setDraft} />}
@@ -884,6 +937,7 @@ export default function VisaAi({ messages }: Props) {
 function InterviewHeader({
     experienceMode,
     loading,
+    mobileDetails,
     onRestart,
     onSelectMode,
     onToggleTheme,
@@ -892,6 +946,7 @@ function InterviewHeader({
 }: {
     experienceMode: ExperienceMode;
     loading: boolean;
+    mobileDetails: ReactNode;
     onRestart: () => void;
     onSelectMode: (mode: ExperienceMode) => void;
     onToggleTheme: () => void;
@@ -923,6 +978,7 @@ function InterviewHeader({
                         <RotateCcw className={cn('h-4 w-4', restarting && 'animate-spin')} />
                         <span>Restart</span>
                     </Button>
+                    {mobileDetails}
                     <Button
                         type="button"
                         variant="ghost"
@@ -953,32 +1009,14 @@ function ModeToggle({
                     key={option}
                     type="button"
                     onClick={() => onSelectMode(option)}
-                    className={cn('oc-mode-button', experienceMode === option && 'is-active')}
+                    aria-pressed={experienceMode === option}
+                    className={cn('oc-mode-button', `is-${option}`, experienceMode === option && 'is-active')}
                 >
                     {option === 'chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
                     <span>{experienceContent[option].label}</span>
                 </button>
             ))}
         </div>
-    );
-}
-
-function AssistantPortrait({ talking }: { talking: boolean }) {
-    return (
-        <section className={cn('oc-assistant-portrait', talking && 'is-talking')}>
-            <div className="oc-assistant-portrait-media">
-                <img
-                    src={talking ? '/assets/images/assistant.gif' : '/assets/images/assistant.png'}
-                    alt="Officer Charles assistant"
-                    className="oc-assistant-portrait-image"
-                    draggable="false"
-                />
-            </div>
-            <div className="oc-assistant-portrait-status">
-                <span className={cn('oc-speaking-dot', talking && 'is-active')} />
-                <span>{talking ? 'Officer Charles is responding' : 'Officer Charles is ready'}</span>
-            </div>
-        </section>
     );
 }
 
@@ -1265,38 +1303,53 @@ function SidebarCards({
     );
 }
 
-function MobileSummary({
+function MobileDetailsSheet({
+    children,
     experience,
+    latestAssistant,
     sessionState,
     userCount,
 }: {
+    children: ReactNode;
     experience: (typeof experienceContent)[ExperienceMode];
+    latestAssistant?: ChatMessage;
     sessionState: InterviewSessionState | null;
     userCount: number;
 }) {
     const answeredCount = sessionState?.answered_questions.length ?? 0;
     const totalQuestions = sessionState?.total_questions ?? 0;
     const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : null;
+    const summary = progress === null
+        ? `${formatPhase(sessionState?.phase)}. ${userCount} user answers.`
+        : `${progress}% complete. ${answeredCount} of ${totalQuestions} answered.`;
 
     return (
-        <section className="oc-mobile-summary">
-            <div className="oc-card-icon">
-                {experience.shortLabel === 'Chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
-            </div>
-            <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                        <p className="oc-kicker">Current experience</p>
-                        <h2 className="oc-card-title truncate">{experience.label}</h2>
+        <div className="oc-mobile-details">
+            <Sheet>
+                <SheetTrigger asChild>
+                    <Button type="button" variant="ghost" className="oc-mobile-details-trigger">
+                        <span className="oc-card-icon">
+                            {experience.shortLabel === 'Chat' ? <Keyboard className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
+                        </span>
+                        <span className="min-w-0 flex-1 text-left">
+                            <span className="oc-kicker">Current experience</span>
+                            <span className="oc-card-title block truncate">{experience.label}</span>
+                            <span className="oc-card-copy mt-1 block">{summary}</span>
+                        </span>
+                        <span className="oc-mobile-details-action">Details</span>
+                    </Button>
+                </SheetTrigger>
+                <SheetContent side="bottom" className={cn('oc-mobile-details-sheet', `is-${experience.shortLabel.toLowerCase()}`)}>
+                    <SheetHeader className="oc-mobile-details-header">
+                        <SheetTitle>{experience.label} details</SheetTitle>
+                        <SheetDescription>{latestAssistant ? textPreview(latestAssistant.content) : summary}</SheetDescription>
+                    </SheetHeader>
+                    <div className="oc-mobile-details-scroll">
+                        {children}
                     </div>
-                </div>
-                <p className="oc-card-copy mt-2">
-                    {progress === null
-                        ? `${formatPhase(sessionState?.phase)}. ${userCount} user answers.`
-                        : `${progress}% complete. ${answeredCount} of ${totalQuestions} answered.`}
-                </p>
-            </div>
-        </section>
+                </SheetContent>
+            </Sheet>
+        </div>
     );
 }
 
@@ -1341,39 +1394,57 @@ function LiveInterviewStage({
     connected,
     connecting,
     error,
+    onStart,
     recording,
     speaking,
 }: {
     connected: boolean;
     connecting: boolean;
     error: string | null;
+    onStart: () => void;
     recording: boolean;
     speaking: boolean;
 }) {
-    const avatarSrc = speaking ? '/assets/images/assistant.gif' : '/assets/images/assistant.png';
-
     return (
         <section className="oc-live-stage">
             <div className="oc-live-main">
-                <div className={cn('oc-live-avatar-wrap', connected && 'is-connected', recording && 'is-recording', speaking && 'is-speaking')}>
-                    <img src={avatarSrc} alt="Officer Charles avatar" className="oc-live-avatar" draggable="false" />
-                    {connecting && (
-                        <div className="oc-live-avatar-loader">
-                            <Loader2 className="h-9 w-9 animate-spin" />
-                        </div>
-                    )}
+                <div className="oc-live-copy">
+                    <h2 className="oc-empty-title">Live interview with Officer Charles</h2>
                 </div>
 
-                <div className="oc-live-copy">
-                    <Badge className="oc-mode-badge mb-3" variant="outline">
-                        Assistant-led setup
-                    </Badge>
-                    <h2 className="oc-empty-title">{connected ? 'Live interview active' : 'Live interview ready'}</h2>
-                    <p className="oc-empty-copy">
-                        {connected
-                            ? 'Use the mic control to answer Officer Charles. The avatar responds live while audio is playing.'
-                            : 'Start a realtime voice session with Officer Charles. Microphone access is requested only when you start.'}
-                    </p>
+                <div className={cn('oc-live-avatar-zone', !connected && 'has-stage-start')}>
+                    <div className={cn('oc-live-avatar-wrap', connected && 'is-connected', recording && 'is-recording', speaking && 'is-speaking')}>
+                        <div className="oc-live-avatar-stack" role="img" aria-label="Officer Charles avatar">
+                            <img
+                                src="/assets/images/assistant.png"
+                                alt=""
+                                aria-hidden="true"
+                                className="oc-live-avatar oc-live-avatar-still"
+                                draggable="false"
+                            />
+                            <img
+                                src="/assets/images/assistant.gif"
+                                alt=""
+                                aria-hidden="true"
+                                className="oc-live-avatar oc-live-avatar-speaking"
+                                draggable="false"
+                            />
+                        </div>
+                        {connecting && (
+                            <div className="oc-live-avatar-loader">
+                                <Loader2 className="h-9 w-9 animate-spin" />
+                            </div>
+                        )}
+                    </div>
+                    {!connected && (
+                        <div className="oc-live-stage-start">
+                            <LiveStartControl
+                                connected={connected}
+                                connecting={connecting}
+                                onStart={onStart}
+                            />
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -1389,32 +1460,31 @@ function LiveInterviewStage({
 
 function LiveMicControls({
     connected,
-    connecting,
     onEnd,
-    onStart,
     onToggleRecording,
     recording,
 }: {
     connected: boolean;
-    connecting: boolean;
     onEnd: () => void;
-    onStart: () => void;
     onToggleRecording: () => void;
     recording: boolean;
 }) {
-    const buttonLabel = !connected ? 'Start live interview' : recording ? 'Send answer' : 'Start speaking';
+    if (!connected) {
+        return null;
+    }
+
+    const buttonLabel = recording ? 'Send answer' : 'Start speaking';
 
     return (
         <footer className="oc-live-control-wrap">
             <div className="oc-live-control-panel">
                 <Button
                     type="button"
-                    onClick={connected ? onToggleRecording : onStart}
-                    disabled={connecting}
+                    onClick={onToggleRecording}
                     className={cn('oc-live-mic-button', recording && 'is-recording')}
                     aria-label={buttonLabel}
                 >
-                    {connecting ? <Loader2 className="h-5 w-5 animate-spin" /> : connected ? <Mic className="h-6 w-6" /> : <Radio className="h-5 w-5" />}
+                    <Mic className="h-6 w-6" />
                 </Button>
                 <span className="oc-live-mic-label">{buttonLabel}</span>
                 {connected && (
@@ -1423,6 +1493,37 @@ function LiveMicControls({
                         End
                     </Button>
                 )}
+            </div>
+        </footer>
+    );
+}
+
+function LiveStartControl({
+    connected,
+    connecting,
+    onStart,
+}: {
+    connected: boolean;
+    connecting: boolean;
+    onStart: () => void;
+}) {
+    if (connected) {
+        return null;
+    }
+
+    return (
+        <footer className="oc-live-control-wrap oc-live-start-control">
+            <div className="oc-live-control-panel">
+                <Button
+                    type="button"
+                    onClick={onStart}
+                    disabled={connecting}
+                    className="oc-live-mic-button"
+                    aria-label="Start live interview"
+                >
+                    {connecting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Radio className="h-5 w-5" />}
+                </Button>
+                <span className="oc-live-mic-label">{connecting ? 'Starting...' : 'Start live interview'}</span>
             </div>
         </footer>
     );
