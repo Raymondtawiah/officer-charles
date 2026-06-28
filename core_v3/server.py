@@ -47,7 +47,7 @@ class ChatMessage(BaseModel):
 class GeminiRequestConfig(BaseModel):
     api_key: str | None = None
     model: str = "gemini-2.5-flash"
-    fallback_model: str | None = "gemini-2.0-flash-lite"
+    fallback_model: str | None = "gemini-2.5-flash-lite"
 
 
 class ChatRequest(BaseModel):
@@ -98,7 +98,7 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         gemini_config=GeminiConfig(
             api_key=request.gemini.api_key or os.getenv("GEMINI_API_KEY", ""),
             model=request.gemini.model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-            fallback_model=request.gemini.fallback_model or os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.0-flash-lite"),
+            fallback_model=request.gemini.fallback_model or os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite"),
         ),
         mode=request.mode,
         visa_type=request.visa_type,
