@@ -58,4 +58,18 @@ return [
         'ws_public_url' => env('CORE_V3_WS_PUBLIC_URL', 'ws://127.0.0.1:8020'),
     ],
 
+    'paystack' => [
+        'public_key' => env('PAYSTACK_PUBLIC_KEY'),
+        'secret_key' => env('PAYSTACK_SECRET_KEY'),
+        'merchant_email' => env('PAYSTACK_MERCHANT_EMAIL'),
+    ],
+
+    'stripe' => [
+        'secret_key' => env('STRIPE_SECRET_KEY'),
+        'publishable_key' => env('STRIPE_PUBLISHABLE_KEY'),
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+        'webhook_url' => env('STRIPE_WEBHOOK_URL', env('APP_URL').'/api/stripe/webhook'),
+        'currency' => env('STRIPE_CURRENCY', 'usd'),
+    ],
+
 ];

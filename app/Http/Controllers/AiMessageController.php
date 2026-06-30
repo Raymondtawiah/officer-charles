@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AiMessage;
 use App\Models\AiSessionState;
+use App\Models\CreditTransaction;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +27,12 @@ class AiMessageController extends Controller
 
     private const VISA_TYPES = ['f1', 'b1_b2'];
 
+    private const CREDIT_COSTS = [
+        'training' => 2,
+        'interview' => 5,
+        'live' => 10,
+    ];
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -43,6 +50,38 @@ class AiMessageController extends Controller
         $visitorId = $this->visitorId($request);
         $activeSession = $this->activeSession($request, $visitorId, $mode, $visaType);
         $sessionId = $activeSession['session_id'];
+
+        $user = $request->user();
+        if ($user) {
+            $hasExistingMessages = AiMessage::where('visitor_id', $visitorId)
+                ->where('session_id', $sessionId)
+                ->where('mode', $mode)
+                ->where('visa_type', $visaType)
+                ->exists();
+
+            if (! $hasExistingMessages) {
+                $cost = self::CREDIT_COSTS[$mode] ?? 2;
+
+                if ($user->credits_balance < $cost) {
+                    return $this->withSessionCookies(response()->json([
+                        'message' => 'Insufficient credits. Please purchase more credits to continue.',
+                        'credits' => $user->credits_balance,
+                    ], 422), $visitorId, $mode, $visaType, $sessionId);
+                }
+
+                $newBalance = $user->credits_balance - $cost;
+                $user->update(['credits_balance' => $newBalance]);
+
+                CreditTransaction::create([
+                    'user_id' => $user->id,
+                    'type' => 'deduction',
+                    'amount' => -$cost,
+                    'balance_after' => $newBalance,
+                    'description' => $mode === 'interview' ? 'Chat Interview session' : 'Training session',
+                    'reference' => $sessionId,
+                ]);
+            }
+        }
 
         $history = AiMessage::where('visitor_id', $visitorId)
             ->where('session_id', $sessionId)
@@ -194,6 +233,31 @@ class AiMessageController extends Controller
         }
 
         $visitorId = $this->visitorId($request);
+
+        $user = $request->user();
+        if ($user) {
+            $cost = self::CREDIT_COSTS['live'];
+
+            if ($user->credits_balance < $cost) {
+                return response()->json([
+                    'message' => 'Insufficient credits. Please purchase more credits to continue.',
+                    'credits' => $user->credits_balance,
+                ], 422);
+            }
+
+            $newBalance = $user->credits_balance - $cost;
+            $user->update(['credits_balance' => $newBalance]);
+
+            CreditTransaction::create([
+                'user_id' => $user->id,
+                'type' => 'deduction',
+                'amount' => -$cost,
+                'balance_after' => $newBalance,
+                'description' => 'Live Avatar Interview session',
+                'reference' => (string) Str::uuid(),
+            ]);
+        }
+
         try {
             $response = Http::timeout(20)
                 ->acceptJson()
