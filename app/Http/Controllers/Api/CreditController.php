@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Contracts\Admin\SettingsServiceInterface;
 use App\Contracts\PaymentGatewayInterface;
 use App\Http\Controllers\Controller;
 use App\Models\CreditTransaction;
@@ -12,6 +13,15 @@ use Illuminate\Support\Facades\Log;
 
 class CreditController extends Controller
 {
+    public function __construct(private SettingsServiceInterface $settings) {}
+
+    public function packages(): JsonResponse
+    {
+        return response()->json([
+            'packages' => $this->settings->getCreditPackages(),
+        ]);
+    }
+
     public function balance(Request $request): JsonResponse
     {
         return response()->json([

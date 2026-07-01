@@ -2,14 +2,54 @@
 
 ## Integration Overview
 
-This is a credit-based payment system. New users receive 20 free credits. After exhausting free credits, users purchase credit packages via Stripe or Paystack. Each feature deducts credits automatically.
+This is a credit-based payment system. New users receive configurable free credits on registration. After exhausting credits, users purchase credit packages via Stripe or Paystack. Each feature deducts credits automatically.
 
 ## Credit Packages
+
+Credit packages are stored in `settings` table (`key = credit_packages`). Defaults:
 
 | Name | Display Name | Credits | USD Price | Paystack Amount (GHS) |
 |------|-------------|---------|-----------|------------------------|
 | starter | Starter Pack - 100 Credits | 100 | $10 | 1133 |
 | standard | Standard Pack - 200 Credits | 200 | $20 | 2266 |
+
+## Public Credit Packages Endpoint
+
+```bash
+GET /api/credit-packages
+```
+
+Response:
+
+```json
+{
+  "packages": {
+    "starter": {
+      "amount": 1000,
+      "credits": 100,
+      "name": "Starter Pack - 100 Credits"
+    },
+    "standard": {
+      "amount": 2000,
+      "credits": 200,
+      "name": "Standard Pack - 200 Credits"
+    }
+  }
+}
+```
+
+## Payment Completion Pages
+
+Authenticated users are redirected after payment:
+
+- Success: `/credits/success?session_id=...`
+- Cancel: `/credits/cancel`
+
+## Onboarding Defaults
+
+- New users receive configurable `free_credits` from the `settings` table on registration, falling back to `20`.
+- Credits are automatically deducted when using interview features.
+- When credits are insufficient, the chat returns a `422` response with the user's current balance.
 
 ## Feature Credit Costs
 
@@ -251,7 +291,3 @@ Required Paystack webhook events:
 4. Redirect user to `authorization_url`.
 5. After payment, Paystack sends a webhook that adds credits.
 6. User can check balance via `GET /api/credits/balance`.
-
-## Onboarding Defaults
-
-- New users receive `20` credits in `users.credits_balance` at registration.

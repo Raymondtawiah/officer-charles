@@ -158,6 +158,162 @@ Controllerc3e19c7c39a601f8f31eba3a79059b48.head = (options?: RouteQueryOptions):
     /**
 * @see \Inertia\Controller::__invoke
  * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/success'
+ */
+const Controller54283e29a228b2e868b819788dad9b35 = (options?: RouteQueryOptions): RouteDefinition<'get'> => ({
+    url: Controller54283e29a228b2e868b819788dad9b35.url(options),
+    method: 'get',
+})
+
+Controller54283e29a228b2e868b819788dad9b35.definition = {
+    methods: ["get","head"],
+    url: '/credits/success',
+} satisfies RouteDefinition<["get","head"]>
+
+/**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/success'
+ */
+Controller54283e29a228b2e868b819788dad9b35.url = (options?: RouteQueryOptions) => {
+    return Controller54283e29a228b2e868b819788dad9b35.definition.url + queryParams(options)
+}
+
+/**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/success'
+ */
+Controller54283e29a228b2e868b819788dad9b35.get = (options?: RouteQueryOptions): RouteDefinition<'get'> => ({
+    url: Controller54283e29a228b2e868b819788dad9b35.url(options),
+    method: 'get',
+})
+/**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/success'
+ */
+Controller54283e29a228b2e868b819788dad9b35.head = (options?: RouteQueryOptions): RouteDefinition<'head'> => ({
+    url: Controller54283e29a228b2e868b819788dad9b35.url(options),
+    method: 'head',
+})
+
+    /**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/success'
+ */
+    const Controller54283e29a228b2e868b819788dad9b35Form = (options?: RouteQueryOptions): RouteFormDefinition<'get'> => ({
+        action: Controller54283e29a228b2e868b819788dad9b35.url(options),
+        method: 'get',
+    })
+
+            /**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/success'
+ */
+        Controller54283e29a228b2e868b819788dad9b35Form.get = (options?: RouteQueryOptions): RouteFormDefinition<'get'> => ({
+            action: Controller54283e29a228b2e868b819788dad9b35.url(options),
+            method: 'get',
+        })
+            /**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/success'
+ */
+        Controller54283e29a228b2e868b819788dad9b35Form.head = (options?: RouteQueryOptions): RouteFormDefinition<'get'> => ({
+            action: Controller54283e29a228b2e868b819788dad9b35.url({
+                        [options?.mergeQuery ? 'mergeQuery' : 'query']: {
+                            _method: 'HEAD',
+                            ...(options?.query ?? options?.mergeQuery ?? {}),
+                        }
+                    }),
+            method: 'get',
+        })
+    
+    Controller54283e29a228b2e868b819788dad9b35.form = Controller54283e29a228b2e868b819788dad9b35Form
+    /**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/cancel'
+ */
+const Controller33751a582e85d9cf02c0fb9efef5aa34 = (options?: RouteQueryOptions): RouteDefinition<'get'> => ({
+    url: Controller33751a582e85d9cf02c0fb9efef5aa34.url(options),
+    method: 'get',
+})
+
+Controller33751a582e85d9cf02c0fb9efef5aa34.definition = {
+    methods: ["get","head"],
+    url: '/credits/cancel',
+} satisfies RouteDefinition<["get","head"]>
+
+/**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/cancel'
+ */
+Controller33751a582e85d9cf02c0fb9efef5aa34.url = (options?: RouteQueryOptions) => {
+    return Controller33751a582e85d9cf02c0fb9efef5aa34.definition.url + queryParams(options)
+}
+
+/**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/cancel'
+ */
+Controller33751a582e85d9cf02c0fb9efef5aa34.get = (options?: RouteQueryOptions): RouteDefinition<'get'> => ({
+    url: Controller33751a582e85d9cf02c0fb9efef5aa34.url(options),
+    method: 'get',
+})
+/**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/cancel'
+ */
+Controller33751a582e85d9cf02c0fb9efef5aa34.head = (options?: RouteQueryOptions): RouteDefinition<'head'> => ({
+    url: Controller33751a582e85d9cf02c0fb9efef5aa34.url(options),
+    method: 'head',
+})
+
+    /**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/cancel'
+ */
+    const Controller33751a582e85d9cf02c0fb9efef5aa34Form = (options?: RouteQueryOptions): RouteFormDefinition<'get'> => ({
+        action: Controller33751a582e85d9cf02c0fb9efef5aa34.url(options),
+        method: 'get',
+    })
+
+            /**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/cancel'
+ */
+        Controller33751a582e85d9cf02c0fb9efef5aa34Form.get = (options?: RouteQueryOptions): RouteFormDefinition<'get'> => ({
+            action: Controller33751a582e85d9cf02c0fb9efef5aa34.url(options),
+            method: 'get',
+        })
+            /**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
+ * @route '/credits/cancel'
+ */
+        Controller33751a582e85d9cf02c0fb9efef5aa34Form.head = (options?: RouteQueryOptions): RouteFormDefinition<'get'> => ({
+            action: Controller33751a582e85d9cf02c0fb9efef5aa34.url({
+                        [options?.mergeQuery ? 'mergeQuery' : 'query']: {
+                            _method: 'HEAD',
+                            ...(options?.query ?? options?.mergeQuery ?? {}),
+                        }
+                    }),
+            method: 'get',
+        })
+    
+    Controller33751a582e85d9cf02c0fb9efef5aa34.form = Controller33751a582e85d9cf02c0fb9efef5aa34Form
+    /**
+* @see \Inertia\Controller::__invoke
+ * @see vendor/inertiajs/inertia-laravel/src/Controller.php:13
  * @route '/settings/appearance'
  */
 const Controllere19ee86e9cf603ce1a59a1ec5d21dec5 = (options?: RouteQueryOptions): RouteDefinition<'get'> => ({
@@ -242,6 +398,8 @@ Controllere19ee86e9cf603ce1a59a1ec5d21dec5.head = (options?: RouteQueryOptions):
 const Controller = {
     '/dashboard': Controller42a740574ecbfbac32f8cc353fc32db9,
     '/visa-ai': Controllerc3e19c7c39a601f8f31eba3a79059b48,
+    '/credits/success': Controller54283e29a228b2e868b819788dad9b35,
+    '/credits/cancel': Controller33751a582e85d9cf02c0fb9efef5aa34,
     '/settings/appearance': Controllere19ee86e9cf603ce1a59a1ec5d21dec5,
 }
 

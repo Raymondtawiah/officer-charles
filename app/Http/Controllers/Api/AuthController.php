@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Contracts\Admin\SettingsServiceInterface;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,6 +14,8 @@ use Laravel\Fortify\Contracts\CreatesNewUsers;
 
 class AuthController extends Controller
 {
+    public function __construct(private SettingsServiceInterface $settings) {}
+
     public function register(Request $request, CreatesNewUsers $creator): JsonResponse
     {
         $request->validate([
@@ -22,9 +25,7 @@ class AuthController extends Controller
         ]);
 
         $user = $creator->create($request->only('name', 'email', 'password', 'password_confirmation'));
-
-        $user->update(['credits_balance' => 20]);
-
+        $user->update(['credits_balance' => $this->settings->getFreeCredits()]);
         Auth::login($user);
 
         return response()->json([
